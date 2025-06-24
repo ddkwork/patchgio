@@ -42,7 +42,7 @@ jobs:
           git remote set-url origin git@github.com:$GH_USER/gio.git
           
           # 复制补丁
-          cp ../patch-source/$PATCH_FILE .
+          cp ../$PATCH_FILE .
           
           # 应用补丁
           git apply $PATCH_FILE
