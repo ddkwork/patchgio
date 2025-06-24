@@ -18,7 +18,7 @@ jobs:
           echo "GH_USER=ddkwork" >> $GITHUB_ENV
           echo "PATCH_FILE=dropFile.patch" >> $GITHUB_ENV
           echo "UPSTREAM_URL=https://github.com/gioui/gio" >> $GITHUB_ENV
-          echo "FORK_URL=https://github.com/$GH_USER/gio" >> $GITHUB_ENV
+          echo "FORK_URL=https://github.com/${{ env.GH_USER }}/gio" >> $GITHUB_ENV  # 修复变量名
 
       # 2. 克隆上游仓库
       - name: Clone upstream
@@ -35,13 +35,12 @@ jobs:
         with:
           path: current-repo
 
-      # 4. 认证 GitHub CLI
-      - name: Authenticate gh CLI
+      # 4. 简化 GitHub CLI 认证（无需登录步骤）
+      - name: Setup GitHub CLI
         run: |
-          gh auth status
-          gh auth login --with-token <<< "${{ secrets.tk }}"
-        env:
-          GH_TOKEN: ${{ secrets.tk }}
+          # 直接设置GH_TOKEN环境变量
+          gh auth status || true  # 忽略未登录的错误
+          echo "GH_TOKEN=${{ secrets.tk }}" >> $GITHUB_ENV
         shell: bash
 
       # 5. 应用补丁并推送
@@ -63,12 +62,15 @@ jobs:
           # 设置远程地址 (使用HTTPS)
           git remote set-url origin $FORK_URL
           
-          # 使用gh cli强制推送
+          # 使用环境变量中的GH_TOKEN进行推送
           echo "强制推送到 $FORK_URL..."
-          gh repo set-default $FORK_URL
-          git push --force origin main
+          git push --force "https://$GH_USER:$GH_TOKEN@github.com/$GH_USER/gio.git" main
           
           # 清理
           rm $PATCH_FILE
           echo "更新完成!"
         shell: bash
+        env:
+          GH_USER: ${{ env.GH_USER }}
+          GH_TOKEN: ${{ env.GH_TOKEN }}
+          PATCH_FILE: ${{ env.PATCH_FILE }}
