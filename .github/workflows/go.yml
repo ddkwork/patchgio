@@ -4,67 +4,71 @@ on:
   push:
     branches:
       - master
-  workflow_dispatch:  # 手动触发按钮
+  workflow_dispatch:
   schedule:
     - cron: '0 0 * * *'  # 每天自动更新
-
-
 
 jobs:
   nuclear-update:
     runs-on: ubuntu-latest
     steps:
-      # 1. 设置环境
+      # 1. 设置环境变量
       - name: Set up environment
         run: |
-          GH_USER="ddkwork"  # 替换为你的 GitHub 用户名
-          FORK_REPO="github.com/$GH_USER/gio"
-          PATCH_FILE="dropFile.patch"
+          echo "GH_USER=ddkwork" >> $GITHUB_ENV
+          echo "PATCH_FILE=dropFile.patch" >> $GITHUB_ENV
+          echo "UPSTREAM_URL=https://github.com/gioui/gio" >> $GITHUB_ENV
+          echo "FORK_URL=https://github.com/$GH_USER/gio" >> $GITHUB_ENV
 
-      # 2. 克隆官方最新 main 分支
+      # 2. 克隆上游仓库
       - name: Clone upstream
-        run: git clone --depth=1 https://github.com/gioui/gio
+        run: |
+          git clone --depth=1 $UPSTREAM_URL gio
+          cd gio
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
         shell: bash
 
-      # 3. 准备补丁文件 (从仓库内获取)
-      - name: Fetch patch file
+      # 3. 检出当前仓库获取补丁文件
+      - name: Checkout current repo
         uses: actions/checkout@v4
         with:
-          path: patch-source
-          fetch-depth: 0
+          path: current-repo
 
-      # 4. 应用你的暴力流程
-      - name: Execute nuclear script
+      # 4. 认证 GitHub CLI
+      - name: Authenticate gh CLI
         run: |
+          gh auth status
+          gh auth login --with-token <<< "${{ secrets.tk }}"
+        env:
+          GH_TOKEN: ${{ secrets.tk }}
+        shell: bash
+
+      # 5. 应用补丁并推送
+      - name: Apply patch and push
+        run: |
+          echo "应用补丁 $PATCH_FILE..."
           cd gio
           
-          # 修改远程地址
-          git remote set-url origin git@github.com:$GH_USER/gio.git
-          
-          # 复制补丁
-          cp ../$PATCH_FILE .
+          # 复制补丁文件
+          cp ../current-repo/$PATCH_FILE .
           
           # 应用补丁
           git apply $PATCH_FILE
           
-          # 提交更改
-          git config --global user.email "action@github.com"
-          git config --global user.name "GitHub Action"
+          # 添加并提交更改
           git add .
-          git commit -am "暴力更新 $(date +'%Y-%m-%d')"
+          git commit -m "暴力更新 $(date +'%Y-%m-%d %H:%M')"
           
-          # 强制推送
-          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          # 设置远程地址 (使用HTTPS)
+          git remote set-url origin $FORK_URL
+          
+          # 使用gh cli强制推送
+          echo "强制推送到 $FORK_URL..."
+          gh repo set-default $FORK_URL
           git push --force origin main
           
           # 清理
           rm $PATCH_FILE
+          echo "更新完成!"
         shell: bash
-        env:
-          GH_USER: ${{ github.repository_owner }}
-
-      # 5. 使用你的 SSH Key 进行认证 (可选但推荐)
-      - name: Add SSH key
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.tk }}
