@@ -18,7 +18,7 @@ jobs:
           echo "GH_USER=ddkwork" >> $GITHUB_ENV
           echo "PATCH_FILE=dropFile.patch" >> $GITHUB_ENV
           echo "UPSTREAM_URL=https://github.com/gioui/gio" >> $GITHUB_ENV
-          echo "FORK_URL=https://github.com/${{ env.GH_USER }}/gio" >> $GITHUB_ENV  # 修复变量名
+          echo "FORK_URL=https://github.com/${{ env.GH_USER }}/gio" >> $GITHUB_ENV
 
       # 2. 克隆上游仓库
       - name: Clone upstream
@@ -35,39 +35,48 @@ jobs:
         with:
           path: current-repo
 
-      # 4. 简化 GitHub CLI 认证（无需登录步骤）
+      # 4. 简化 GitHub CLI 认证
       - name: Setup GitHub CLI
         run: |
-          # 直接设置GH_TOKEN环境变量
           gh auth status || true  # 忽略未登录的错误
           echo "GH_TOKEN=${{ secrets.tk }}" >> $GITHUB_ENV
         shell: bash
 
-      # 5. 应用补丁并推送
+      # 5. 应用补丁并推送（修复版）
       - name: Apply patch and push
         run: |
           echo "应用补丁 $PATCH_FILE..."
           cd gio
           
-          # 复制补丁文件
-          cp ../current-repo/$PATCH_FILE .
+          # 从当前仓库复制补丁文件到临时位置
+          PATCH_PATH="../current-repo/$PATCH_FILE"
+          TEMP_PATCH="temp.patch"
+          cp "$PATCH_PATH" "$TEMP_PATCH"
           
           # 应用补丁
-          git apply $PATCH_FILE
+          git apply "$TEMP_PATCH"
           
-          # 添加并提交更改
+          # 删除临时补丁文件 - 确保不会被提交
+          rm -f "$TEMP_PATCH"
+          
+          # 添加所有更改（不包括补丁文件）
           git add .
-          git commit -m "暴力更新 $(date +'%Y-%m-%d %H:%M')"
           
-          # 设置远程地址 (使用HTTPS)
-          git remote set-url origin $FORK_URL
+          # 检查是否有更改需要提交
+          if git diff --cached --quiet; then
+            echo "没有检测到变更，跳过提交"
+          else
+            # 提交更改
+            git commit -m "暴力更新 $(date +'%Y-%m-%d %H:%M')"
           
-          # 使用环境变量中的GH_TOKEN进行推送
-          echo "强制推送到 $FORK_URL..."
-          git push --force "https://$GH_USER:$GH_TOKEN@github.com/$GH_USER/gio.git" main
+            # 设置远程地址
+            git remote set-url origin "$FORK_URL"
           
-          # 清理
-          rm $PATCH_FILE
+            # 使用令牌进行推送
+            echo "强制推送到 $FORK_URL..."
+            git push --force "https://$GH_USER:$GH_TOKEN@github.com/$GH_USER/gio.git" main
+          fi
+          
           echo "更新完成!"
         shell: bash
         env:
