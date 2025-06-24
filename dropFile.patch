@@ -139,7 +139,7 @@ diff --git a/app/internal/windows/windows.go b/app/internal/windows/windows.go
 +}
 +
 +func DragQueryPoint(hDrop HDROP) (x, y int, isClientArea bool) {
-+	var pt POINT
++	var pt Point
 +	ret, _, _ := _DragQueryPoint.Call(
 +		hDrop,
 +		uintptr(unsafe.Pointer(&pt)))
@@ -155,9 +155,6 @@ diff --git a/app/internal/windows/windows.go b/app/internal/windows/windows.go
 +	HDROP  = HANDLE
 +)
 +
-+type POINT struct {
-+	X, Y int32
-+}
  
  func AdjustWindowRectEx(r *Rect, dwStyle uint32, bMenu int, dwExStyle uint32) {
  	_AdjustWindowRectEx.Call(uintptr(unsafe.Pointer(r)), uintptr(dwStyle), uintptr(bMenu), uintptr(dwExStyle))
