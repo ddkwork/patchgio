@@ -104,7 +104,7 @@ diff --git a/app/os_windows.go b/app/os_windows.go
  		return err
  	}
  	w.hwnd = hwnd
-+	setCaptionColor(gowindows.HWND(hwnd), 0x292929)
++	setCaptionColor(syscall.HWND(hwnd), 0x292929)
  	return nil
  }
  
