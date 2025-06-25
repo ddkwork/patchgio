@@ -1,76 +1,21 @@
 Subject: [PATCH] 暴力更新 2025-06-24 12:21
 ---
-Index: app/os_x11.go
+Index: app/fileDrop.go
 IDEA additional info:
 Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
 <+>UTF-8
 ===================================================================
-diff --git a/app/os_x11.go b/app/os_x11.go
---- a/app/os_x11.go	(revision c3ce484b5e804173f0cea4564b35f766df70e992)
-+++ b/app/os_x11.go	(date 1750769310660)
-@@ -926,3 +926,9 @@
- 	w.xkb.SetKeymap(unsafe.Pointer(keymap), unsafe.Pointer(state))
- 	return nil
- }
+diff --git a/app/fileDrop.go b/app/fileDrop.go
+new file mode 100644
+--- /dev/null	(revision 2354e139354c1d2414c9848112f26fef1fd8e5d5)
++++ b/app/fileDrop.go	(revision 2354e139354c1d2414c9848112f26fef1fd8e5d5)
+@@ -0,0 +1,7 @@
++package app
 +
-+var dragHandler = func(files []string) {}
-+
-+func FileDropCallback(fn func(files []string)) {
-+	dragHandler = fn
-+}
-Index: app/os_js.go
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
-diff --git a/app/os_js.go b/app/os_js.go
---- a/app/os_js.go	(revision c3ce484b5e804173f0cea4564b35f766df70e992)
-+++ b/app/os_js.go	(date 1750769310534)
-@@ -825,3 +825,9 @@
- func (j JSViewEvent) Valid() bool {
- 	return !(j.Element.IsNull() || j.Element.IsUndefined())
- }
-+
-+var dragHandler = func(files []string) {}
++var fileDropCallback = func(files []string) {}
 +
 +func FileDropCallback(fn func(files []string)) {
-+	dragHandler = fn
-+}
-Index: app/os_ios.go
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
-diff --git a/app/os_ios.go b/app/os_ios.go
---- a/app/os_ios.go	(revision c3ce484b5e804173f0cea4564b35f766df70e992)
-+++ b/app/os_ios.go	(date 1750769310518)
-@@ -444,3 +444,9 @@
- func (u UIKitViewEvent) Valid() bool {
- 	return u != (UIKitViewEvent{})
- }
-+
-+var dragHandler = func(files []string) {}
-+
-+func FileDropCallback(fn func(files []string)) {
-+	dragHandler = fn
-+}
-Index: app/os_darwin.go
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
-diff --git a/app/os_darwin.go b/app/os_darwin.go
---- a/app/os_darwin.go	(revision c3ce484b5e804173f0cea4564b35f766df70e992)
-+++ b/app/os_darwin.go	(date 1750769310503)
-@@ -271,3 +271,9 @@
- 		w.loop.FlushEvents()
- 	})
- }
-+
-+var dragHandler = func(files []string) {}
-+
-+func FileDropCallback(fn func(files []string)) {
-+	dragHandler = fn
++	fileDropCallback = fn
 +}
 Index: app/internal/windows/windows.go
 IDEA additional info:
@@ -79,7 +24,7 @@ Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
 ===================================================================
 diff --git a/app/internal/windows/windows.go b/app/internal/windows/windows.go
 --- a/app/internal/windows/windows.go	(revision c3ce484b5e804173f0cea4564b35f766df70e992)
-+++ b/app/internal/windows/windows.go	(date 1750769385762)
++++ b/app/internal/windows/windows.go	(revision 2354e139354c1d2414c9848112f26fef1fd8e5d5)
 @@ -177,6 +177,9 @@
  }
  
@@ -138,60 +83,6 @@ diff --git a/app/internal/windows/windows.go b/app/internal/windows/windows.go
  )
  
  func AdjustWindowRectEx(r *Rect, dwStyle uint32, bMenu int, dwExStyle uint32) {
-Index: app/os_macos.go
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
-diff --git a/app/os_macos.go b/app/os_macos.go
---- a/app/os_macos.go	(revision c3ce484b5e804173f0cea4564b35f766df70e992)
-+++ b/app/os_macos.go	(date 1750769310550)
-@@ -1166,3 +1166,9 @@
- func (a AppKitViewEvent) Valid() bool {
- 	return a != (AppKitViewEvent{})
- }
-+
-+var dragHandler = func(files []string) {}
-+
-+func FileDropCallback(fn func(files []string)) {
-+	dragHandler = fn
-+}
-Index: app/os_unix.go
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
-diff --git a/app/os_unix.go b/app/os_unix.go
---- a/app/os_unix.go	(revision c3ce484b5e804173f0cea4564b35f766df70e992)
-+++ b/app/os_unix.go	(date 1750769310576)
-@@ -97,3 +97,9 @@
- 	pointer.CursorNorthEastSouthWestResize: "fd_double_arrow",
- 	pointer.CursorNorthWestSouthEastResize: "bd_double_arrow",
- }
-+
-+var dragHandler = func(files []string) {}
-+
-+func FileDropCallback(fn func(files []string)) {
-+	dragHandler = fn
-+}
-Index: app/os_wayland.go
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
-diff --git a/app/os_wayland.go b/app/os_wayland.go
---- a/app/os_wayland.go	(revision c3ce484b5e804173f0cea4564b35f766df70e992)
-+++ b/app/os_wayland.go	(date 1750769310613)
-@@ -1937,3 +1937,9 @@
- 	f := math.Float64frombits(b) - (3 << 43)
- 	return float32(f)
- }
-+
-+var dragHandler = func(files []string) {}
-+
-+func FileDropCallback(fn func(files []string)) {
-+	dragHandler = fn
-+}
 Index: app/os_windows.go
 IDEA additional info:
 Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
@@ -199,18 +90,17 @@ Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
 ===================================================================
 diff --git a/app/os_windows.go b/app/os_windows.go
 --- a/app/os_windows.go	(revision c3ce484b5e804173f0cea4564b35f766df70e992)
-+++ b/app/os_windows.go	(date 1750769310645)
-@@ -148,7 +148,8 @@
++++ b/app/os_windows.go	(revision 2354e139354c1d2414c9848112f26fef1fd8e5d5)
+@@ -148,7 +148,7 @@
  	return nil
  }
  
 -const dwExStyle = windows.WS_EX_APPWINDOW | windows.WS_EX_WINDOWEDGE
 +const dwExStyle = windows.WS_EX_APPWINDOW | windows.WS_EX_WINDOWEDGE | windows.WS_EX_ACCEPTFILES
-+
  
  func (w *window) init() error {
  	var resErr error
-@@ -186,9 +187,16 @@
+@@ -186,9 +186,15 @@
  		return err
  	}
  	w.hwnd = hwnd
@@ -220,29 +110,23 @@ diff --git a/app/os_windows.go b/app/os_windows.go
  
 +func setCaptionColor(handle syscall.HWND, color uint32) {
 +	const DWMWA_CAPTION_COLOR = 35
-+	 syscall.DwmSetWindowAttribute(handle, DWMWA_CAPTION_COLOR, unsafe.Pointer(&color), uint32(unsafe.Sizeof(color)))
++	syscall.DwmSetWindowAttribute(handle, DWMWA_CAPTION_COLOR, unsafe.Pointer(&color), uint32(unsafe.Sizeof(color)))
 +}
-+
 +
  // update handles changes done by the user, and updates the configuration.
  // It reads the window style and size/position and updates w.config.
  // If anything has changed it emits a ConfigEvent to notify the application.
-@@ -224,6 +232,31 @@
+@@ -224,6 +230,26 @@
  	w.draw(true)
  }
  
-+var dragHandler = func(files []string) {}
-+
-+func FileDropCallback(fn func(files []string)) {
-+	dragHandler = fn
-+}
-+type DropFilesEventData struct {
++type dropFilesResult struct {
 +	X, Y  int
 +	Files []string
 +}
 +
-+func genDropFilesEventArg(hDrop uintptr) DropFilesEventData {
-+	var data DropFilesEventData
++func dragQueryFile(hDrop uintptr) dropFilesResult {
++	var data dropFilesResult
 +	_, fileCount := windows.DragQueryFile(hDrop, 0xFFFFFFFF)
 +	data.Files = make([]string, fileCount)
 +
@@ -259,30 +143,12 @@ diff --git a/app/os_windows.go b/app/os_windows.go
  func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr {
  	win, exists := winMap.Load(hwnd)
  	if !exists {
-@@ -233,6 +266,8 @@
+@@ -233,6 +259,8 @@
  	w := win.(*window)
  
  	switch msg {
 +	case windows.WM_DROPFILES:
-+		dragHandler(genDropFilesEventArg(wParam).Files)
++		fileDropCallback(dragQueryFile(wParam).Files)
  	case windows.WM_UNICHAR:
  		if wParam == windows.UNICODE_NOCHAR {
  			// Tell the system that we accept WM_UNICHAR messages.
-Index: app/os_android.go
-IDEA additional info:
-Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
-<+>UTF-8
-===================================================================
-diff --git a/app/os_android.go b/app/os_android.go
---- a/app/os_android.go	(revision c3ce484b5e804173f0cea4564b35f766df70e992)
-+++ b/app/os_android.go	(date 1750769310487)
-@@ -1498,3 +1498,9 @@
- func (a AndroidViewEvent) Valid() bool {
- 	return a != (AndroidViewEvent{})
- }
-+
-+var dragHandler = func(files []string) {}
-+
-+func FileDropCallback(fn func(files []string)) {
-+	dragHandler = fn
-+}
