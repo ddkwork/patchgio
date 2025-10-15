@@ -2,3 +2,7 @@
 gio
 .idea
 gio.tar
+/action_test.go
+/go.mod
+/go.sum
+/log.log
