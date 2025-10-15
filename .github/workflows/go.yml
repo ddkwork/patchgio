@@ -12,7 +12,7 @@ jobs:
   nuclear-update:
     runs-on: ubuntu-latest
     steps:
-      # 1. 设置环境变量 xx
+      # 1. 设置环境变量
       - name: Set up environment
         run: |
           echo "GH_USER=ddkwork" >> $GITHUB_ENV
