@@ -6,3 +6,4 @@ gio.tar
 /go.mod
 /go.sum
 /log.log
+# 忽略所有.go文件
