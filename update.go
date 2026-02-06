@@ -84,32 +84,40 @@ func cloneAndAddDependency(dep Dependency) {
 	// 克隆
 	runCmd("git", "clone", dep.URL, dep.Dir)
 
-	// 检查并删除 .git 目录
+	// 删除 .git 目录
 	gitDir := filepath.Join(dep.Dir, ".git")
-	if _, err := os.Stat(gitDir); err == nil {
+	if err := os.RemoveAll(gitDir); err == nil {
 		fmt.Printf("  删除 %s\n", gitDir)
-		os.RemoveAll(gitDir)
-	} else {
-		fmt.Printf("  %s 不存在 (预期中)\n", gitDir)
 	}
 
-	// 检查并删除 go.mod 文件
+	// 删除主 go.mod 和 go.sum
 	goMod := filepath.Join(dep.Dir, "go.mod")
-	if _, err := os.Stat(goMod); err == nil {
+	if err := os.Remove(goMod); err == nil {
 		fmt.Printf("  删除 %s\n", goMod)
-		os.Remove(goMod)
-	} else {
-		fmt.Printf("  %s 不存在 (可能正常)\n", goMod)
+	}
+	goSum := filepath.Join(dep.Dir, "go.sum")
+	if err := os.Remove(goSum); err == nil {
+		fmt.Printf("  删除 %s\n", goSum)
 	}
 
-	// 检查并删除 go.sum 文件
-	goSum := filepath.Join(dep.Dir, "go.sum")
-	if _, err := os.Stat(goSum); err == nil {
-		fmt.Printf("  删除 %s\n", goSum)
-		os.Remove(goSum)
-	} else {
-		fmt.Printf("  %s 不存在 (可能正常)\n", goSum)
-	}
+	// 递归删除所有子目录中的 go.mod 和 go.sum
+	filepath.Walk(dep.Dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if filepath.Base(path) == "go.mod" {
+			fmt.Printf("  删除 %s\n", path)
+			os.Remove(path)
+		}
+		if filepath.Base(path) == "go.sum" {
+			fmt.Printf("  删除 %s\n", path)
+			os.Remove(path)
+		}
+		return nil
+	})
 
 	// 检查目录内容
 	fmt.Printf("  检查 %s 目录内容:\n", dep.Dir)
