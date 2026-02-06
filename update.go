@@ -74,6 +74,14 @@ func main() {
 	fmt.Println("运行 go mod tidy...")
 	runCmd("go", "mod", "tidy")
 
+	// 升级所有依赖
+	fmt.Println("升级所有依赖...")
+	runCmd("go", "get", "-u", "all")
+
+	// 再次 tidy
+	fmt.Println("再次运行 go mod tidy...")
+	runCmd("go", "mod", "tidy")
+
 	// 提交模块更新
 	commitFiles("更新 go.mod 和 go.sum")
 
