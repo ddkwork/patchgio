@@ -46,36 +46,25 @@ jobs:
       - name: Apply patch and push
         run: |
           echo "应用补丁 $PATCH_FILE..."
-
           cp "current-repo/dropfile.patch" "gio"
           cp "current-repo/使用矩阵跟踪锚点绝对坐标.patch" "gio"
-
           cd gio
           
-          # 应用补丁
           git apply "dropfile.patch"
-          git apply "使用矩阵跟踪锚点绝对坐标.patch"
-          
-          # 删除临时补丁文件 - 确保不会被提交
-          # rm -f "$TEMP_PATCH"
-          
-          # 添加所有更改（不包括补丁文件）
           git add .
+          git commit -m "dropfile $(date +'%Y-%m-%d %H:%M')"
           
-          # 检查是否有更改需要提交
-          if git diff --cached --quiet; then
-            echo "没有检测到变更，跳过提交"
-          else
-            # 提交更改
-            git commit -m "暴力更新 $(date +'%Y-%m-%d %H:%M')"
           
+          git apply "使用矩阵跟踪锚点绝对坐标.patch"
+          git add .
+          git commit -m "使用矩阵跟踪锚点绝对坐标 $(date +'%Y-%m-%d %H:%M')"
+         
             # 设置远程地址
             git remote set-url origin "$FORK_URL"
           
             # 使用令牌进行推送
             echo "强制推送到 $FORK_URL..."
             git push --force "https://$GH_USER:$GH_TOKEN@github.com/$GH_USER/gio.git" main
-          fi
           
           echo "更新完成!"
         shell: bash
