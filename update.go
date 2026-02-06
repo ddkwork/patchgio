@@ -49,6 +49,34 @@ func main() {
 		cloneAndAddDependency(dep)
 	}
 
+	// 注释cpu/cmd/example/main.go中过时的导入
+	fmt.Println("\n注释 cpu/cmd/example/main.go 中过时的导入...")
+	filePath := "cpu/cmd/example/main.go"
+	content, err := os.ReadFile(filePath)
+	if err == nil {
+		contentStr := string(content)
+		contentStr = strings.Replace(contentStr, `"gioui.org/cpu/example"`, `//"gioui.org/cpu/example"`, -1)
+		os.WriteFile(filePath, []byte(contentStr), 0644)
+		fmt.Println("  已注释过时导入")
+	}
+
+	// 清空主模块go.mod并写入 module gioui.org
+	fmt.Println("\n清空并重写主模块 go.mod...")
+	os.WriteFile("go.mod", []byte("module gioui.org\n"), 0644)
+	fmt.Println("  已重写 go.mod")
+
+	// 删除go.sum
+	fmt.Println("删除 go.sum...")
+	os.Remove("go.sum")
+	fmt.Println("  已删除 go.sum")
+
+	// 运行 go mod tidy
+	fmt.Println("运行 go mod tidy...")
+	runCmd("go", "mod", "tidy")
+
+	// 提交模块更新
+	commitFiles("更新 go.mod 和 go.sum")
+
 	// 复制补丁文件到gio目录
 	fmt.Println("\n2. 复制补丁文件...")
 	runCmd("cp", "../dropfile.patch", ".")
