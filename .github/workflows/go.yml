@@ -12,14 +12,24 @@ jobs:
   nuclear-update:
     runs-on: ubuntu-latest
     steps:
-      # 1. 设置环境变量
+      # 1. 检出当前仓库
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # 2. 设置 Go 环境
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      # 3. 设置环境变量
       - name: Set up environment
         run: |
           echo "GH_USER=ddkwork" >> $GITHUB_ENV
           echo "UPSTREAM_URL=https://github.com/gioui/gio" >> $GITHUB_ENV
           echo "FORK_URL=https://github.com/${{ env.GH_USER }}/gio" >> $GITHUB_ENV
 
-      # 2. 简化 GitHub CLI 认证
+      # 4. 简化 GitHub CLI 认证
       - name: Setup GitHub CLI
         run: |
           gh auth status || true  # 忽略未登录的错误
