@@ -16,7 +16,6 @@ jobs:
       - name: Set up environment
         run: |
           echo "GH_USER=ddkwork" >> $GITHUB_ENV
-          echo "PATCH_FILE=dropfile.patch" >> $GITHUB_ENV
           echo "UPSTREAM_URL=https://github.com/gioui/gio" >> $GITHUB_ENV
           echo "FORK_URL=https://github.com/${{ env.GH_USER }}/gio" >> $GITHUB_ENV
 
@@ -59,13 +58,48 @@ jobs:
           git apply "使用矩阵跟踪锚点绝对坐标.patch"
           git add .
           git commit -m "使用矩阵跟踪锚点绝对坐标 $(date +'%Y-%m-%d %H:%M')"
+
+          # 克隆 gio-cmd 到 cmd 目录
+          git clone https://github.com/gioui/gio-cmd cmd
+          rm -rf cmd/.git cmd/go.mod cmd/go.sum
+          git add cmd
+          git commit -m "添加 cmd 目录 $(date +'%Y-%m-%d %H:%M')"
+
+          # 克隆 gio-x 到 x 目录
+          git clone https://github.com/gioui/gio-x x
+          rm -rf x/.git x/go.mod x/go.sum
+          git add x
+          git commit -m "添加 x 目录 $(date +'%Y-%m-%d %H:%M')"
+
+          # 克隆 gio-example 到 example 目录
+          git clone https://github.com/gioui/gio-example example
+          rm -rf example/.git example/go.mod example/go.sum
+          git add example
+          git commit -m "添加 example 目录 $(date +'%Y-%m-%d %H:%M')"
+
+          # 克隆 gio-shader 到 shader 目录
+          git clone https://git.sr.ht/~eliasnaur/gio-shader shader
+          rm -rf shader/.git shader/go.mod shader/go.sum
+          git add shader
+          git commit -m "添加 shader 目录 $(date +'%Y-%m-%d %H:%M')"
+
+          # 克隆 gio-cpu 到 cpu 目录
+          git clone https://git.sr.ht/~eliasnaur/gio-cpu cpu
+          rm -rf cpu/.git cpu/go.mod cpu/go.sum
+          git add cpu
+          git commit -m "添加 cpu 目录 $(date +'%Y-%m-%d %H:%M')"
+
+          # 运行 go mod tidy
+          go mod tidy
+          git add go.mod go.sum
+          git commit -m "运行 go mod tidy $(date +'%Y-%m-%d %H:%M')"
                    
-            # 设置远程地址
-            git remote set-url origin "$FORK_URL"
+          # 设置远程地址
+          git remote set-url origin "$FORK_URL"
           
-            # 使用令牌进行推送
-            echo "强制推送到 $FORK_URL..."
-            git push --force "https://$GH_USER:$GH_TOKEN@github.com/$GH_USER/gio.git" main
+          # 使用令牌进行推送
+          echo "强制推送到 $FORK_URL..."
+          git push --force "https://$GH_USER:$GH_TOKEN@github.com/$GH_USER/gio.git" main
           
           echo "更新完成!"
         shell: bash
