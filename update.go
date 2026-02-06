@@ -90,17 +90,7 @@ func cloneAndAddDependency(dep Dependency) {
 		fmt.Printf("  删除 %s\n", gitDir)
 	}
 
-	// 删除主 go.mod 和 go.sum
-	goMod := filepath.Join(dep.Dir, "go.mod")
-	if err := os.Remove(goMod); err == nil {
-		fmt.Printf("  删除 %s\n", goMod)
-	}
-	goSum := filepath.Join(dep.Dir, "go.sum")
-	if err := os.Remove(goSum); err == nil {
-		fmt.Printf("  删除 %s\n", goSum)
-	}
-
-	// 递归删除所有子目录中的 go.mod 和 go.sum
+	// 递归删除依赖目录中的所有 go.mod 和 go.sum 文件
 	filepath.Walk(dep.Dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
