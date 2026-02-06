@@ -41,69 +41,11 @@ jobs:
           echo "GH_TOKEN=${{ secrets.tk }}" >> $GITHUB_ENV
         shell: bash
 
-      # 5. 应用补丁并推送（修复版）
-      - name: Apply patch and push
+      # 5. 运行 Go 程序更新 fork
+      - name: Run update script
         run: |
-          cp "current-repo/dropfile.patch" "gio"
-          cp "current-repo/使用矩阵跟踪锚点绝对坐标.patch" "gio"
-          cd gio
-          
-          git add .
-          git commit -m "添加补丁文件 $(date +'%Y-%m-%d %H:%M')"
-          
-          git apply "dropfile.patch"
-          git add .
-          git commit -m "拖放文件支持 $(date +'%Y-%m-%d %H:%M')"
-          
-          git apply "使用矩阵跟踪锚点绝对坐标.patch"
-          git add .
-          git commit -m "使用矩阵跟踪锚点绝对坐标 $(date +'%Y-%m-%d %H:%M')"
-
-          # 克隆 gio-cmd 到 cmd 目录
-          git clone https://github.com/gioui/gio-cmd cmd
-          rm -rf cmd/.git cmd/go.mod cmd/go.sum
-          go mod tidy
-          git add cmd go.mod go.sum
-          git commit -m "添加 cmd 目录 $(date +'%Y-%m-%d %H:%M')"
-
-          # 克隆 gio-x 到 x 目录
-          git clone https://github.com/gioui/gio-x x
-          rm -rf x/.git x/go.mod x/go.sum
-          go mod tidy
-          git add x go.mod go.sum
-          git commit -m "添加 x 目录 $(date +'%Y-%m-%d %H:%M')"
-
-          # 克隆 gio-example 到 example 目录
-          git clone https://github.com/gioui/gio-example example
-          rm -rf example/.git example/go.mod example/go.sum
-          go mod tidy
-          git add example go.mod go.sum
-          git commit -m "添加 example 目录 $(date +'%Y-%m-%d %H:%M')"
-
-          # 克隆 gio-shader 到 shader 目录
-          git clone https://git.sr.ht/~eliasnaur/gio-shader shader
-          rm -rf shader/.git shader/go.mod shader/go.sum
-          go mod tidy
-          git add shader go.mod go.sum
-          git commit -m "添加 shader 目录 $(date +'%Y-%m-%d %H:%M')"
-
-          # 克隆 gio-cpu 到 cpu 目录
-          git clone https://git.sr.ht/~eliasnaur/gio-cpu cpu
-          rm -rf cpu/.git cpu/go.mod cpu/go.sum
-          go mod tidy
-          git add cpu go.mod go.sum
-          git commit -m "添加 cpu 目录 $(date +'%Y-%m-%d %H:%M')"
-                   
-          # 设置远程地址
-          git remote set-url origin "$FORK_URL"
-          
-          # 使用令牌进行推送
-          echo "强制推送到 $FORK_URL..."
-          git push --force "https://$GH_USER:$GH_TOKEN@github.com/$GH_USER/gio.git" main
-          
-          echo "更新完成!"
-        shell: bash
+          cd current-repo
+          go run update.go
         env:
           GH_USER: ${{ env.GH_USER }}
-          GH_TOKEN: ${{ env.GH_TOKEN }}
-          PATCH_FILE: ${{ env.PATCH_FILE }}
+          GH_TOKEN: ${{ secrets.tk }}
