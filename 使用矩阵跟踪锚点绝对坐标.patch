@@ -164,7 +164,7 @@ diff --git a/op/op.go b/op/op.go
 +// CallOp invokes operations recorded by Record.
  type CallOp struct {
 -	// Ops is the list of operations to invoke.
-+	// Ops is teh list of operations to invoke.
++	// Ops is the list of operations to invoke.
  	ops   *ops.Ops
  	start ops.PC
  	end   ops.PC
@@ -186,7 +186,7 @@ diff --git a/op/op.go b/op/op.go
  }
  
 -// TransformStack represents a TransformOp pushed on the transformation stack.
-+// TransformStack represents a TransformOp pushed on teh transformation stack.
++// TransformStack represents a TransformOp pushed on the transformation stack.
  type TransformStack struct {
 -	id      ops.StackID
 -	macroID uint32
@@ -237,12 +237,12 @@ diff --git a/op/op.go b/op/op.go
  // Defer executes c after all other operations have completed, including
  // previously deferred operations.
 -// Defer saves the transformation stack and pushes it prior to executing
-+// Defer saves teh transformation stack and pushes it prior to executing
++// Defer saves the transformation stack and pushes it prior to executing
  // c. All other operation state is reset.
  //
  // Note that deferred operations are executed in first-in-first-out order,
 -// unlike the Go facility of the same name.
-+// unlike Go facility of teh same name.
++// unlike Go facility of the same name.
  func Defer(o *Ops, c CallOp) {
  	if c.ops == nil {
  		return
@@ -257,7 +257,7 @@ diff --git a/op/op.go b/op/op.go
 +
 +	_ = ops.Save(&o.Internal)
 +
-+	// Wrap c in a macro that loads teh saved state before execution.
++	// Wrap c in a macro that loads the saved state before execution.
  	m := Record(o)
 -	state.Load()
 +
@@ -312,7 +312,7 @@ diff --git a/op/op.go b/op/op.go
 -// Add the recorded list of operations. Add
 -// panics if the Ops containing the recording
 +// Add recorded list of operations. Add
-+// panics if Ops containing teh recording
++// panics if Ops containing the recording
  // has been reset.
  func (c CallOp) Add(o *Ops) {
  	if c.ops == nil {
