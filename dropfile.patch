@@ -1,4 +1,4 @@
-Subject: [PATCH] 暴力更新 2025-06-24 12:21
+Subject: [PATCH] 拖放文件支持 2025-06-24 12:21
 ---
 Index: app/fileDrop.go
 IDEA additional info:

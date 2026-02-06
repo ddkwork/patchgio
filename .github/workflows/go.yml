@@ -46,10 +46,10 @@ jobs:
       - name: Apply patch and push
         run: |
           echo "应用补丁 $PATCH_FILE..."
-          
-          cp "dropfile.patch" "gio"
-          cp "使用矩阵跟踪锚点绝对坐标.patch" "gio"
-          
+
+          cp "current-repo/dropfile.patch" "gio"
+          cp "current-repo/使用矩阵跟踪锚点绝对坐标.patch" "gio"
+
           cd gio
           
           # 应用补丁
