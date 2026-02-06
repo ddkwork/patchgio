@@ -120,10 +120,6 @@ func cloneAndAddDependency(dep Dependency) {
 		}
 	}
 
-	// 运行 go mod tidy
-	fmt.Println("  运行 go mod tidy...")
-	runCmd("go", "mod", "tidy")
-
 	// 提交
 	msg := fmt.Sprintf("添加 %s 目录", dep.Name)
 	commitFiles(msg)
