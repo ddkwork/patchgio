@@ -16,7 +16,7 @@ jobs:
       - name: Set up environment
         run: |
           echo "GH_USER=ddkwork" >> $GITHUB_ENV
-          echo "PATCH_FILE=dropFile.patch" >> $GITHUB_ENV
+          echo "PATCH_FILE=dropfile.patch" >> $GITHUB_ENV
           echo "UPSTREAM_URL=https://github.com/gioui/gio" >> $GITHUB_ENV
           echo "FORK_URL=https://github.com/${{ env.GH_USER }}/gio" >> $GITHUB_ENV
 
@@ -46,18 +46,18 @@ jobs:
       - name: Apply patch and push
         run: |
           echo "应用补丁 $PATCH_FILE..."
+          
+          cp "dropfile.patch" "gio"
+          cp "使用矩阵跟踪锚点绝对坐标.patch" "gio"
+          
           cd gio
           
-          # 从当前仓库复制补丁文件到临时位置
-          PATCH_PATH="../current-repo/$PATCH_FILE"
-          TEMP_PATCH="temp.patch"
-          cp "$PATCH_PATH" "$TEMP_PATCH"
-          
           # 应用补丁
-          git apply "$TEMP_PATCH"
+          git apply "dropfile.patch"
+          git apply "使用矩阵跟踪锚点绝对坐标.patch"
           
           # 删除临时补丁文件 - 确保不会被提交
-          rm -f "$TEMP_PATCH"
+          # rm -f "$TEMP_PATCH"
           
           # 添加所有更改（不包括补丁文件）
           git add .
