@@ -33,26 +33,8 @@ func main() {
 	fmt.Println("\n1. 克隆上游仓库...")
 	runCmd("git", "clone", "--depth=1", upstreamURL, "gio")
 
-	// 复制补丁文件到gio目录
-	fmt.Println("\n2. 复制补丁文件...")
-	runCmd("cp", "dropfile.patch", "gio/")
-	runCmd("cp", "使用矩阵跟踪锚点绝对坐标.patch", "gio/")
-
 	// 进入gio目录
 	os.Chdir("gio")
-
-	// 提交补丁文件
-	commitFiles("添加补丁文件")
-
-	// 应用第一个补丁
-	fmt.Println("\n3. 应用 dropfile.patch...")
-	runCmd("git", "apply", "dropfile.patch")
-	commitFiles("拖放文件支持")
-
-	// 应用第二个补丁
-	fmt.Println("应用 使用矩阵跟踪锚点绝对坐标.patch...")
-	runCmd("git", "apply", "使用矩阵跟踪锚点绝对坐标.patch")
-	commitFiles("使用矩阵跟踪锚点绝对坐标")
 
 	// 克隆依赖
 	deps := []Dependency{
@@ -66,6 +48,24 @@ func main() {
 	for _, dep := range deps {
 		cloneAndAddDependency(dep)
 	}
+
+	// 复制补丁文件到gio目录
+	fmt.Println("\n2. 复制补丁文件...")
+	runCmd("cp", "../dropfile.patch", ".")
+	runCmd("cp", "../使用矩阵跟踪锚点绝对坐标.patch", ".")
+
+	// 提交补丁文件
+	commitFiles("添加补丁文件")
+
+	// 应用第一个补丁
+	fmt.Println("\n3. 应用 dropfile.patch...")
+	runCmd("git", "apply", "dropfile.patch")
+	commitFiles("拖放文件支持")
+
+	// 应用第二个补丁
+	fmt.Println("应用 使用矩阵跟踪锚点绝对坐标.patch...")
+	runCmd("git", "apply", "使用矩阵跟踪锚点绝对坐标.patch")
+	commitFiles("使用矩阵跟踪锚点绝对坐标")
 
 	// 设置远程地址并推送
 	fmt.Println("\n8. 设置远程地址并推送...")
