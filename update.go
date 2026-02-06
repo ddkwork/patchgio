@@ -32,12 +32,14 @@ func main() {
 	// 克隆上游仓库
 	fmt.Println("\n1. 克隆上游仓库...")
 	runCmd("git", "clone", "--depth=1", upstreamURL, "gio")
-	os.Chdir("gio")
 
-	// 复制补丁文件
+	// 复制补丁文件到gio目录
 	fmt.Println("\n2. 复制补丁文件...")
-	runCmd("cp", "dropfile.patch", ".")
-	runCmd("cp", "使用矩阵跟踪锚点绝对坐标.patch", ".")
+	runCmd("cp", "dropfile.patch", "gio/")
+	runCmd("cp", "使用矩阵跟踪锚点绝对坐标.patch", "gio/")
+
+	// 进入gio目录
+	os.Chdir("gio")
 
 	// 提交补丁文件
 	commitFiles("添加补丁文件")
