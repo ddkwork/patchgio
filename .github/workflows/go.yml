@@ -47,21 +47,19 @@ jobs:
         run: |
           cp "current-repo/dropfile.patch" "gio"
           cp "current-repo/使用矩阵跟踪锚点绝对坐标.patch" "gio"
+          cd gio
           
           git add .
           git commit -m "添加补丁文件 $(date +'%Y-%m-%d %H:%M')"
-          
-          cd gio
           
           git apply "dropfile.patch"
           git add .
           git commit -m "拖放文件支持 $(date +'%Y-%m-%d %H:%M')"
           
-          
           git apply "使用矩阵跟踪锚点绝对坐标.patch"
           git add .
           git commit -m "使用矩阵跟踪锚点绝对坐标 $(date +'%Y-%m-%d %H:%M')"
-         
+                   
             # 设置远程地址
             git remote set-url origin "$FORK_URL"
           
