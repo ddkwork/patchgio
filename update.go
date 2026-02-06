@@ -36,8 +36,8 @@ func main() {
 
 	// 复制补丁文件
 	fmt.Println("\n2. 复制补丁文件...")
-	runCmd("cp", "../dropfile.patch", ".")
-	runCmd("cp", "../使用矩阵跟踪锚点绝对坐标.patch", ".")
+	runCmd("cp", "dropfile.patch", ".")
+	runCmd("cp", "使用矩阵跟踪锚点绝对坐标.patch", ".")
 
 	// 提交补丁文件
 	commitFiles("添加补丁文件")

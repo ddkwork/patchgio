@@ -19,33 +19,16 @@ jobs:
           echo "UPSTREAM_URL=https://github.com/gioui/gio" >> $GITHUB_ENV
           echo "FORK_URL=https://github.com/${{ env.GH_USER }}/gio" >> $GITHUB_ENV
 
-      # 2. 克隆上游仓库
-      - name: Clone upstream
-        run: |
-          git clone --depth=1 $UPSTREAM_URL gio
-          cd gio
-          git config --global user.email "action@github.com"
-          git config --global user.name "GitHub Action"
-        shell: bash
-
-      # 3. 检出当前仓库获取补丁文件
-      - name: Checkout current repo
-        uses: actions/checkout@v5
-        with:
-          path: current-repo
-
-      # 4. 简化 GitHub CLI 认证
+      # 2. 简化 GitHub CLI 认证
       - name: Setup GitHub CLI
         run: |
           gh auth status || true  # 忽略未登录的错误
           echo "GH_TOKEN=${{ secrets.tk }}" >> $GITHUB_ENV
         shell: bash
 
-      # 5. 运行 Go 程序更新 fork
+      # 3. 运行 Go 程序更新 fork
       - name: Run update script
-        run: |
-          cd current-repo
-          go run update.go
+        run: go run update.go
         env:
           GH_USER: ${{ env.GH_USER }}
           GH_TOKEN: ${{ secrets.tk }}
