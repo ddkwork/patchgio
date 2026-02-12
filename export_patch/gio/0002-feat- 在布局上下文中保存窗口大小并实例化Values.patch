@@ -1,0 +1,60 @@
+From 9ffe41d8b09ce4c819f04d60c9e49946d8d866de Mon Sep 17 00:00:00 2001
+From: ddkwork <2762713521@qq.com>
+Date: Wed, 11 Feb 2026 09:06:15 +0800
+Subject: [PATCH] feat: 在布局上下文中保存窗口大小并实例化Values
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/app.go        | 8 +++++---
+ layout/context.go | 5 +++--
+ 2 files changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/app/app.go b/app/app.go
+index 155baeaf..7c33cd1f 100644
+--- a/app/app.go
++++ b/app/app.go
+@@ -117,11 +117,13 @@ func NewContext(ops *op.Ops, e FrameEvent) layout.Context {
+ 	}
+ 
+ 	return layout.Context{
+-		Ops:         ops,
++		Constraints: layout.Exact(size),
++		Metric:      e.Metric,
+ 		Now:         e.Now,
++		Values:      make(map[string]any),
++		WindowSize:  size,
+ 		Source:      e.Source,
+-		Metric:      e.Metric,
+-		Constraints: layout.Exact(size),
++		Ops:         ops,
+ 	}
+ }
+ 
+diff --git a/layout/context.go b/layout/context.go
+index 2554924a..7d192db2 100644
+--- a/layout/context.go
++++ b/layout/context.go
+@@ -3,6 +3,7 @@
+ package layout
+ 
+ import (
++	"image"
+ 	"time"
+ 
+ 	"gioui.org/io/input"
+@@ -30,8 +31,8 @@ type Context struct {
+ 
+ 	// Values is a map of program global data associated with the context.
+ 	// It is not for use by widgets.
+-	Values map[string]any
+-
++	Values     map[string]any
++	WindowSize image.Point
+ 	input.Source
+ 	*op.Ops
+ }
+-- 
+2.47.0.windows.2
+

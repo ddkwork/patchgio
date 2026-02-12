@@ -1,0 +1,1034 @@
+From 691fba79a181f95c7843e3ae0258d1524a300ee4 Mon Sep 17 00:00:00 2001
+From: Admin <2762713521@qq.com>
+Date: Thu, 12 Feb 2026 19:46:08 +0800
+Subject: [PATCH] refactor__升级子模块的现代化语法
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+---
+ cmd/gogio/build_info.go                   |  2 +-
+ cmd/gogio/main.go                         |  1 -
+ cmd/gogio/race_test.go                    |  1 -
+ cmd/gogio/wayland_test.go                 | 12 ++++------
+ cmd/gogio/windows_test.go                 |  6 ++---
+ cmd/gogio/x11_test.go                     | 12 ++++------
+ cpu/cmd/example/{main.go => main.go.bak}  |  0
+ cpu/driver.go                             |  1 +
+ cpu/driver_nosupport.go                   |  1 -
+ example/fps-table/table.go                |  7 ------
+ example/glfw/{main.go => main.go.bak}     |  0
+ example/gophers/main.go                   |  1 -
+ example/haptic/example_nonandroid.go      |  1 -
+ example/multiwindow/main.go               |  6 ++---
+ example/notify/build_macos.go             |  1 -
+ go.mod                                    | 15 ++++++------
+ go.sum                                    | 29 +++++++++++++----------
+ shader/cmd/convertshaders/glslvalidate.go |  5 ++--
+ shader/cmd/convertshaders/hlsl.go         |  6 ++---
+ shader/cmd/convertshaders/main.go         | 14 ++++-------
+ shader/cmd/convertshaders/msl.go          |  4 ++--
+ shader/cmd/convertshaders/workdir.go      |  4 ++--
+ x/colorpicker/color.go                    |  7 ------
+ x/component/app_bar.go                    | 18 ++++----------
+ x/component/nav_drawer.go                 |  6 ++---
+ x/component/tooltip_desktop.go            |  1 -
+ x/component/tooltip_mobile.go             |  1 -
+ x/explorer/explorer.go                    |  2 +-
+ x/explorer/explorer_ios.go                |  1 -
+ x/explorer/explorer_linux.go              |  1 -
+ x/explorer/explorer_macos.go              |  1 -
+ x/explorer/explorer_unsupported.go        |  1 -
+ x/haptic/haptic_android.go                |  1 -
+ x/haptic/haptic_default.go                |  1 -
+ x/haptic/haptic_ios.go                    |  1 -
+ x/notify/notify_android.go                |  1 -
+ x/notify/notify_darwin.go                 |  1 -
+ x/notify/notify_dbus.go                   |  1 -
+ x/notify/notify_unsupported.go            |  1 -
+ x/notify/notify_windows.go                |  1 -
+ x/outlay/fan.go                           |  7 ------
+ x/outlay/flow.go                          |  9 +------
+ x/pref/battery/battery_unsupported.go     |  1 -
+ x/pref/locale/locale_linux.go             |  1 -
+ x/pref/locale/locale_unsupported.go       |  1 -
+ x/pref/theme/theme_unsupported.go         |  1 -
+ x/richtext/richtext.go                    | 19 +++++++--------
+ x/stroke/util_test.go                     |  8 +++----
+ x/styledtext/iterator.go                  |  6 ++---
+ 49 files changed, 77 insertions(+), 152 deletions(-)
+ rename cpu/cmd/example/{main.go => main.go.bak} (100%)
+ rename example/glfw/{main.go => main.go.bak} (100%)
+
+diff --git a/cmd/gogio/build_info.go b/cmd/gogio/build_info.go
+index cb19066e..b7f121d3 100644
+--- a/cmd/gogio/build_info.go
++++ b/cmd/gogio/build_info.go
+@@ -157,7 +157,7 @@ func getLdFlags(appID string) string {
+ }
+ 
+ func getCommaList(s string) (list []string) {
+-	for _, v := range strings.Split(s, ",") {
++	for v := range strings.SplitSeq(s, ",") {
+ 		if v := strings.TrimSpace(v); v != "" {
+ 			list = append(list, v)
+ 		}
+diff --git a/cmd/gogio/main.go b/cmd/gogio/main.go
+index bedc17b5..5e38ad68 100644
+--- a/cmd/gogio/main.go
++++ b/cmd/gogio/main.go
+@@ -198,7 +198,6 @@ func buildIcons(baseDir, icon string, variants []iconVariant) error {
+ 	}
+ 	var resizes errgroup.Group
+ 	for _, v := range variants {
+-		v := v
+ 		resizes.Go(func() (err error) {
+ 			path := filepath.Join(baseDir, v.path)
+ 			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+diff --git a/cmd/gogio/race_test.go b/cmd/gogio/race_test.go
+index 1f3c689a..6c6ebf0e 100644
+--- a/cmd/gogio/race_test.go
++++ b/cmd/gogio/race_test.go
+@@ -1,7 +1,6 @@
+ // SPDX-License-Identifier: Unlicense OR MIT
+ 
+ //go:build race
+-// +build race
+ 
+ package main_test
+ 
+diff --git a/cmd/gogio/wayland_test.go b/cmd/gogio/wayland_test.go
+index c1adbba1..32c94e3e 100644
+--- a/cmd/gogio/wayland_test.go
++++ b/cmd/gogio/wayland_test.go
+@@ -119,16 +119,14 @@ func (d *WaylandTestDriver) Start(path string) {
+ 			}
+ 		}
+ 
+-		wg.Add(1)
+-		go func() {
++		wg.Go(func() {
+ 			if err := cmd.Wait(); err != nil && ctx.Err() == nil && !strings.Contains(err.Error(), "interrupt") {
+ 				// Don't print all stderr, since we use --verbose.
+ 				// TODO(mvdan): if it's useful, probably filter
+ 				// errors and show them.
+ 				d.Error(err)
+ 			}
+-			wg.Done()
+-		}()
++		})
+ 	}
+ 
+ 	// Then, start our program on the sway compositor above.
+@@ -146,13 +144,11 @@ func (d *WaylandTestDriver) Start(path string) {
+ 			d.Fatal(err)
+ 		}
+ 		d.Cleanup(cancel)
+-		wg.Add(1)
+-		go func() {
++		wg.Go(func() {
+ 			if err := cmd.Wait(); err != nil && ctx.Err() == nil {
+ 				d.Error(err)
+ 			}
+-			wg.Done()
+-		}()
++		})
+ 	}
+ 
+ 	// Wait for the gio app to render.
+diff --git a/cmd/gogio/windows_test.go b/cmd/gogio/windows_test.go
+index 996b5114..24b1e31a 100644
+--- a/cmd/gogio/windows_test.go
++++ b/cmd/gogio/windows_test.go
+@@ -120,13 +120,11 @@ func (d *WineTestDriver) Start(path string) {
+ 			d.Fatal(err)
+ 		}
+ 		d.Cleanup(cancel)
+-		wg.Add(1)
+-		go func() {
++		wg.Go(func() {
+ 			if err := cmd.Wait(); err != nil && ctx.Err() == nil {
+ 				d.Error(err)
+ 			}
+-			wg.Done()
+-		}()
++		})
+ 	}
+ 	// Wait for the gio app to render.
+ 	d.waitForFrame()
+diff --git a/cmd/gogio/x11_test.go b/cmd/gogio/x11_test.go
+index 7d7f6d8e..61785ec4 100644
+--- a/cmd/gogio/x11_test.go
++++ b/cmd/gogio/x11_test.go
+@@ -56,13 +56,11 @@ func (d *X11TestDriver) Start(path string) {
+ 			d.Fatal(err)
+ 		}
+ 		d.Cleanup(cancel)
+-		wg.Add(1)
+-		go func() {
++		wg.Go(func() {
+ 			if err := cmd.Wait(); err != nil && ctx.Err() == nil {
+ 				d.Error(err)
+ 			}
+-			wg.Done()
+-		}()
++		})
+ 	}
+ 
+ 	// Wait for the gio app to render.
+@@ -119,15 +117,13 @@ func (d *X11TestDriver) startServer(wg *sync.WaitGroup, width, height int) {
+ 		return err
+ 	})
+ 
+-	wg.Add(1)
+-	go func() {
++	wg.Go(func() {
+ 		if err := cmd.Wait(); err != nil && ctx.Err() == nil {
+ 			// Print all output and error.
+ 			io.Copy(os.Stdout, combined)
+ 			d.Error(err)
+ 		}
+-		wg.Done()
+-	}()
++	})
+ }
+ 
+ func (d *X11TestDriver) Screenshot() image.Image {
+diff --git a/cpu/cmd/example/main.go b/cpu/cmd/example/main.go.bak
+similarity index 100%
+rename from cpu/cmd/example/main.go
+rename to cpu/cmd/example/main.go.bak
+diff --git a/cpu/driver.go b/cpu/driver.go
+index 816f6077..2ec59f2b 100644
+--- a/cpu/driver.go
++++ b/cpu/driver.go
+@@ -15,6 +15,7 @@ package cpu
+ #include "runtime.h"
+ */
+ import "C"
++
+ import (
+ 	"unsafe"
+ )
+diff --git a/cpu/driver_nosupport.go b/cpu/driver_nosupport.go
+index 3a118f26..e92de9f1 100644
+--- a/cpu/driver_nosupport.go
++++ b/cpu/driver_nosupport.go
+@@ -1,7 +1,6 @@
+ // SPDX-License-Identifier: Unlicense OR MIT
+ 
+ //go:build !(linux && (arm64 || arm || amd64))
+-// +build !linux !arm64,!arm,!amd64
+ 
+ package cpu
+ 
+diff --git a/example/fps-table/table.go b/example/fps-table/table.go
+index ba34a0ac..7d537fc0 100644
+--- a/example/fps-table/table.go
++++ b/example/fps-table/table.go
+@@ -46,13 +46,6 @@ type FrameTiming struct {
+ 	FramesPerSecond float64
+ }
+ 
+-func max(a, b int) int {
+-	if a > b {
+-		return a
+-	}
+-	return b
+-}
+-
+ func loop(w *app.Window) error {
+ 	th := material.NewTheme()
+ 	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
+diff --git a/example/glfw/main.go b/example/glfw/main.go.bak
+similarity index 100%
+rename from example/glfw/main.go
+rename to example/glfw/main.go.bak
+diff --git a/example/gophers/main.go b/example/gophers/main.go
+index 5465e975..60101e98 100644
+--- a/example/gophers/main.go
++++ b/example/gophers/main.go
+@@ -207,7 +207,6 @@ func (a *App) fetchContributors() {
+ 	userErrs := make(chan error, len(cons))
+ 	avatarErrs := make(chan error, len(cons))
+ 	for _, con := range cons {
+-		con := con
+ 		avatar := con.GetAvatarURL()
+ 		if avatar == "" {
+ 			continue
+diff --git a/example/haptic/example_nonandroid.go b/example/haptic/example_nonandroid.go
+index 2b7ddb79..2374faf4 100644
+--- a/example/haptic/example_nonandroid.go
++++ b/example/haptic/example_nonandroid.go
+@@ -1,5 +1,4 @@
+ //go:build !android
+-// +build !android
+ 
+ package main
+ 
+diff --git a/example/multiwindow/main.go b/example/multiwindow/main.go
+index 551613da..e5eee696 100644
+--- a/example/multiwindow/main.go
++++ b/example/multiwindow/main.go
+@@ -73,9 +73,7 @@ func (a *Application) Wait() {
+ // NewWindow creates a new tracked window.
+ func (a *Application) NewWindow(title string, view View, opts ...app.Option) {
+ 	opts = append(opts, app.Title(title))
+-	a.active.Add(1)
+-	go func() {
+-		defer a.active.Done()
++	a.active.Go(func() {
+ 
+ 		w := &Window{
+ 			App:    a,
+@@ -83,7 +81,7 @@ func (a *Application) NewWindow(title string, view View, opts ...app.Option) {
+ 		}
+ 		w.Window.Option(opts...)
+ 		view.Run(w)
+-	}()
++	})
+ }
+ 
+ // Window holds window state.
+diff --git a/example/notify/build_macos.go b/example/notify/build_macos.go
+index 3d39ce80..80f4f8cb 100644
+--- a/example/notify/build_macos.go
++++ b/example/notify/build_macos.go
+@@ -1,5 +1,4 @@
+ //go:build darwin
+-// +build darwin
+ 
+ //go:generate mkdir -p example.app/Contents/MacOS
+ //go:generate go build -o example.app/Contents/MacOS/example
+diff --git a/go.mod b/go.mod
+index 42f0a6a9..64e53d0e 100644
+--- a/go.mod
++++ b/go.mod
+@@ -1,16 +1,15 @@
+ module gioui.org
+ 
+-go 1.24.0
++go 1.26
+ 
+ require (
+ 	eliasnaur.com/font v0.0.0-20230308162249-dd43949cb42d
+ 	gioui.org/shader v1.0.8
+ 	github.com/go-text/typesetting v0.3.0
+-	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0
+-	golang.org/x/exp/shiny v0.0.0-20250408133849-7e4ce0ab07d0
+-	golang.org/x/image v0.26.0
+-	golang.org/x/sys v0.39.0
+-	golang.org/x/text v0.32.0
++	golang.org/x/exp v0.0.0-20260211191109-2735e65f0518
++	golang.org/x/exp/shiny v0.0.0-20260211191109-2735e65f0518
++	golang.org/x/image v0.36.0
++	golang.org/x/net v0.50.0
++	golang.org/x/sys v0.41.0
++	golang.org/x/text v0.34.0
+ )
+-
+-require golang.org/x/net v0.48.0
+diff --git a/go.sum b/go.sum
+index abdadc70..aa4961c6 100644
+--- a/go.sum
++++ b/go.sum
+@@ -5,17 +5,20 @@ gioui.org/shader v1.0.8 h1:6ks0o/A+b0ne7RzEqRZK5f4Gboz2CfG+mVliciy6+qA=
+ gioui.org/shader v1.0.8/go.mod h1:mWdiME581d/kV7/iEhLmUgUK5iZ09XR5XpduXzbePVM=
+ github.com/go-text/typesetting v0.3.0 h1:OWCgYpp8njoxSRpwrdd1bQOxdjOXDj9Rqart9ML4iF4=
+ github.com/go-text/typesetting v0.3.0/go.mod h1:qjZLkhRgOEYMhU9eHBr3AR4sfnGJvOXNLt8yRAySFuY=
++github.com/go-text/typesetting v0.3.3 h1:ihGNJU9KzdK2QRDy1Bm7FT5RFQoYb+3n3EIhI/4eaQc=
++github.com/go-text/typesetting v0.3.3/go.mod h1:vIRUT25mLQaSh4C8H/lIsKppQz/Gdb8Pu/tNwpi52ts=
+ github.com/go-text/typesetting-utils v0.0.0-20241103174707-87a29e9e6066 h1:qCuYC+94v2xrb1PoS4NIDe7DGYtLnU2wWiQe9a1B1c0=
+-github.com/go-text/typesetting-utils v0.0.0-20241103174707-87a29e9e6066/go.mod h1:DDxDdQEnB70R8owOx3LVpEFvpMK9eeH1o2r0yZhFI9o=
+-golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0 h1:R84qjqJb5nVJMxqWYb3np9L5ZsaDtB+a39EqjV0JSUM=
+-golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0/go.mod h1:S9Xr4PYopiDyqSyp5NjCrhFrqg6A5zA2E/iPHPhqnS8=
+-golang.org/x/exp/shiny v0.0.0-20250408133849-7e4ce0ab07d0 h1:tMSqXTK+AQdW3LpCbfatHSRPHeW6+2WuxaVQuHftn80=
+-golang.org/x/exp/shiny v0.0.0-20250408133849-7e4ce0ab07d0/go.mod h1:ygj7T6vSGhhm/9yTpOQQNvuAUFziTH7RUiH74EoE2C8=
+-golang.org/x/image v0.26.0 h1:4XjIFEZWQmCZi6Wv8BoxsDhRU3RVnLX04dToTDAEPlY=
+-golang.org/x/image v0.26.0/go.mod h1:lcxbMFAovzpnJxzXS3nyL83K27tmqtKzIJpctK8YO5c=
+-golang.org/x/net v0.48.0 h1:zyQRTTrjc33Lhh0fBgT/H3oZq9WuvRR5gPC70xpDiQU=
+-golang.org/x/net v0.48.0/go.mod h1:+ndRgGjkh8FGtu1w1FGbEC31if4VrNVMuKTgcAAnQRY=
+-golang.org/x/sys v0.39.0 h1:CvCKL8MeisomCi6qNZ+wbb0DN9E5AATixKsvNtMoMFk=
+-golang.org/x/sys v0.39.0/go.mod h1:OgkHotnGiDImocRcuBABYBEXf8A9a87e/uXjp9XT3ks=
+-golang.org/x/text v0.32.0 h1:ZD01bjUt1FQ9WJ0ClOL5vxgxOI/sVCNgX1YtKwcY0mU=
+-golang.org/x/text v0.32.0/go.mod h1:o/rUWzghvpD5TXrTIBuJU77MTaN0ljMWE47kxGJQ7jY=
++github.com/go-text/typesetting-utils v0.0.0-20250618110550-c820a94c77b8 h1:4KCscI9qYWMGTuz6BpJtbUSRzcBrUSSE0ENMJbNSrFs=
++github.com/go-text/typesetting-utils v0.0.0-20250618110550-c820a94c77b8/go.mod h1:3/62I4La/HBRX9TcTpBj4eipLiwzf+vhI+7whTc9V7o=
++golang.org/x/exp v0.0.0-20260211191109-2735e65f0518 h1:2E1CW7v5QB+Wi3N+MXllOtVR6SFmI8iJM8EdzgxrgrU=
++golang.org/x/exp v0.0.0-20260211191109-2735e65f0518/go.mod h1:K79w1Vqn7PoiZn+TkNpx3BUWUQksGO3JcVX6qIjytmA=
++golang.org/x/exp/shiny v0.0.0-20260211191109-2735e65f0518 h1:L+6QF4oaj9YxUgGypZBweUUFvazvs2OpT3MMV6bL/KY=
++golang.org/x/exp/shiny v0.0.0-20260211191109-2735e65f0518/go.mod h1:zxsA7NyDTOUjcveVwAMFI/YIErWwayTW/4RGqB/RzKk=
++golang.org/x/image v0.36.0 h1:Iknbfm1afbgtwPTmHnS2gTM/6PPZfH+z2EFuOkSbqwc=
++golang.org/x/image v0.36.0/go.mod h1:YsWD2TyyGKiIX1kZlu9QfKIsQ4nAAK9bdgdrIsE7xy4=
++golang.org/x/net v0.50.0 h1:ucWh9eiCGyDR3vtzso0WMQinm2Dnt8cFMuQa9K33J60=
++golang.org/x/net v0.50.0/go.mod h1:UgoSli3F/pBgdJBHCTc+tp3gmrU4XswgGRgtnwWTfyM=
++golang.org/x/sys v0.41.0 h1:Ivj+2Cp/ylzLiEU89QhWblYnOE9zerudt9Ftecq2C6k=
++golang.org/x/sys v0.41.0/go.mod h1:OgkHotnGiDImocRcuBABYBEXf8A9a87e/uXjp9XT3ks=
++golang.org/x/text v0.34.0 h1:oL/Qq0Kdaqxa1KbNeMKwQq0reLCCaFtqu2eNuSeNHbk=
++golang.org/x/text v0.34.0/go.mod h1:homfLqTYRFyVYemLBFl5GgL/DWEiH5wcsQ5gSh1yziA=
+diff --git a/shader/cmd/convertshaders/glslvalidate.go b/shader/cmd/convertshaders/glslvalidate.go
+index b17150fc..713cafa1 100644
+--- a/shader/cmd/convertshaders/glslvalidate.go
++++ b/shader/cmd/convertshaders/glslvalidate.go
+@@ -5,7 +5,8 @@ package main
+ import (
+ 	"bytes"
+ 	"fmt"
+-	"io/ioutil"
++	"os"
++
+ 	"os/exec"
+ 	"path/filepath"
+ 	"strings"
+@@ -40,7 +41,7 @@ func (glsl *GLSLValidator) Convert(path, variant string, lang string, input []by
+ 		return nil, fmt.Errorf("%s\nfailed to run %v: %w", out, cmd.Args, err)
+ 	}
+ 
+-	compiled, err := ioutil.ReadFile(pathout)
++	compiled, err := os.ReadFile(pathout)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("unable to read output %q: %w", pathout, err)
+ 	}
+diff --git a/shader/cmd/convertshaders/hlsl.go b/shader/cmd/convertshaders/hlsl.go
+index def3e3e6..14220be7 100644
+--- a/shader/cmd/convertshaders/hlsl.go
++++ b/shader/cmd/convertshaders/hlsl.go
+@@ -6,7 +6,7 @@ import (
+ 	"bytes"
+ 	"fmt"
+ 	"io"
+-	"io/ioutil"
++	"os"
+ 	"os/exec"
+ 	"path/filepath"
+ 	"runtime"
+@@ -68,7 +68,7 @@ func (fxc *FXC) Compile(path, variant string, input []byte, entryPoint string, p
+ 		return nil, fmt.Errorf("%s\n%sfailed to run %v: %w", output, info, cmd.Args, err)
+ 	}
+ 
+-	compiled, err := ioutil.ReadFile(result)
++	compiled, err := os.ReadFile(result)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("unable to read output %q: %w", pathout, err)
+ 	}
+@@ -110,7 +110,7 @@ func (dxc *DXC) Compile(path, variant string, input []byte, entryPoint string, p
+ 		return "", fmt.Errorf("%s\nfailed to run %v: %w", output, cmd.Args, err)
+ 	}
+ 
+-	compiled, err := ioutil.ReadFile(result)
++	compiled, err := os.ReadFile(result)
+ 	if err != nil {
+ 		return "", fmt.Errorf("unable to read output %q: %w", pathout, err)
+ 	}
+diff --git a/shader/cmd/convertshaders/main.go b/shader/cmd/convertshaders/main.go
+index 22baa95f..b7f86fe5 100644
+--- a/shader/cmd/convertshaders/main.go
++++ b/shader/cmd/convertshaders/main.go
+@@ -8,7 +8,6 @@ import (
+ 	"flag"
+ 	"fmt"
+ 	"io"
+-	"io/ioutil"
+ 	"os"
+ 	"os/exec"
+ 	"path/filepath"
+@@ -39,7 +38,7 @@ func main() {
+ 	var work WorkDir
+ 	cleanup := func() {}
+ 	if *workdir == "" {
+-		tempdir, err := ioutil.TempDir("", "shader-convert")
++		tempdir, err := os.MkdirTemp("", "shader-convert")
+ 		if err != nil {
+ 			fmt.Fprintf(os.Stderr, "failed to create tempdir: %v\n", err)
+ 			os.Exit(1)
+@@ -63,7 +62,7 @@ func main() {
+ 		os.Exit(1)
+ 	}
+ 
+-	if err := ioutil.WriteFile("shaders.go", out.Bytes(), 0644); err != nil {
++	if err := os.WriteFile("shaders.go", out.Bytes(), 0644); err != nil {
+ 		fmt.Fprintf(os.Stderr, "failed to create shaders: %v\n", err)
+ 		cleanup()
+ 		os.Exit(1)
+@@ -146,7 +145,6 @@ func (conv *Converter) Run(out io.Writer) error {
+ 	shaderResults := make([]ShaderResult, len(shaders))
+ 
+ 	for i, shaderPath := range shaders {
+-		i, shaderPath := i, shaderPath
+ 
+ 		switch filepath.Ext(shaderPath) {
+ 		case ".vert", ".frag":
+@@ -469,7 +467,7 @@ func (conv *Converter) ShaderVariant(shaderPath, variant string, src []byte, lan
+ }
+ 
+ func (conv *Converter) ComputeShader(shaderPath string) ([]shaderSources, error) {
+-	sh, err := ioutil.ReadFile(shaderPath)
++	sh, err := os.ReadFile(shaderPath)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("failed to load shader %q: %w", shaderPath, err)
+ 	}
+@@ -531,11 +529,9 @@ type Workers struct {
+ }
+ 
+ func (lg *Workers) Go(fn func()) {
+-	lg.running.Add(1)
+-	go func() {
+-		defer lg.running.Done()
++	lg.running.Go(func() {
+ 		fn()
+-	}()
++	})
+ }
+ 
+ func (lg *Workers) Wait() {
+diff --git a/shader/cmd/convertshaders/msl.go b/shader/cmd/convertshaders/msl.go
+index c97dba32..c6a3066d 100644
+--- a/shader/cmd/convertshaders/msl.go
++++ b/shader/cmd/convertshaders/msl.go
+@@ -4,7 +4,7 @@ package main
+ 
+ import (
+ 	"fmt"
+-	"io/ioutil"
++
+ 	"os"
+ 	"os/exec"
+ 	"path/filepath"
+@@ -99,7 +99,7 @@ func (msl *MSL) compileFor(sdk, minVer, path string) ([]byte, error) {
+ 		return nil, fmt.Errorf("%s\nfailed to run %v: %w", output, metal.Args, err)
+ 	}
+ 
+-	compiled, err := ioutil.ReadFile(result)
++	compiled, err := os.ReadFile(result)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("unable to read output %q: %w", pathout, err)
+ 	}
+diff --git a/shader/cmd/convertshaders/workdir.go b/shader/cmd/convertshaders/workdir.go
+index 4c1c0921..812883bb 100644
+--- a/shader/cmd/convertshaders/workdir.go
++++ b/shader/cmd/convertshaders/workdir.go
+@@ -4,7 +4,7 @@ package main
+ 
+ import (
+ 	"fmt"
+-	"io/ioutil"
++
+ 	"os"
+ 	"path/filepath"
+ 	"strings"
+@@ -27,7 +27,7 @@ func (wd WorkDir) Path(path ...string) (fullpath string) {
+ }
+ 
+ func (wd WorkDir) WriteFile(path string, data []byte) error {
+-	err := ioutil.WriteFile(path, data, 0644)
++	err := os.WriteFile(path, data, 0644)
+ 	if err != nil {
+ 		return fmt.Errorf("unable to create %v: %w", path, err)
+ 	}
+diff --git a/x/colorpicker/color.go b/x/colorpicker/color.go
+index 942dfd8d..99326a2f 100644
+--- a/x/colorpicker/color.go
++++ b/x/colorpicker/color.go
+@@ -328,13 +328,6 @@ func (p PickerStyle) layoutLeftPane(gtx C) D {
+ 	return dims
+ }
+ 
+-func max(a, b int) int {
+-	if a > b {
+-		return a
+-	}
+-	return b
+-}
+-
+ func (p PickerStyle) layoutSliders(gtx C) D {
+ 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+ 		layout.Rigid(func(gtx C) D {
+diff --git a/x/component/app_bar.go b/x/component/app_bar.go
+index a7b92ea4..c6461229 100644
+--- a/x/component/app_bar.go
++++ b/x/component/app_bar.go
+@@ -86,10 +86,7 @@ func (a *actionGroup) layout(gtx C, th *material.Theme, overflowBtn *widget.Clic
+ 	overflowedActions := len(a.actions)
+ 	gtx.Constraints.Min.Y = 0
+ 	widthDp := float32(gtx.Constraints.Max.X) / gtx.Metric.PxPerDp
+-	visibleActionItems := int((widthDp / 48) - 1)
+-	if visibleActionItems < 0 {
+-		visibleActionItems = 0
+-	}
++	visibleActionItems := max(int((widthDp/48)-1), 0)
+ 	visibleActionItems = min(visibleActionItems, len(a.actions))
+ 	overflowedActions -= visibleActionItems
+ 	var actions []layout.FlexChild
+@@ -131,7 +128,7 @@ type overflowMenu struct {
+ 	list layout.List
+ 	// the button that triggers the overflow menu
+ 	widget.Clickable
+-	selectedTag interface{}
++	selectedTag any
+ }
+ 
+ func (o *overflowMenu) updateState(gtx layout.Context, th *material.Theme, barPos VerticalAnchorPosition, actions *actionGroup) {
+@@ -329,7 +326,7 @@ var overflowButtonInset = layout.Inset{
+ // OverflowAction holds information about an action available in an overflow menu
+ type OverflowAction struct {
+ 	Name string
+-	Tag  interface{}
++	Tag  any
+ }
+ 
+ func Interpolate(a, b color.NRGBA, progress float32) color.NRGBA {
+@@ -433,13 +430,6 @@ func (a *AppBar) Layout(gtx layout.Context, theme *material.Theme, navDesc, over
+ 	return layout.Dimensions{Size: gtx.Constraints.Max}
+ }
+ 
+-func min(a, b int) int {
+-	if a < b {
+-		return a
+-	}
+-	return b
+-}
+-
+ // AppBarEvent
+ type AppBarEvent interface {
+ 	AppBarEvent()
+@@ -468,7 +458,7 @@ func (a AppBarContextMenuDismissed) String() string {
+ // AppBarOverflowActionClicked indicates that an action in the app bar overflow
+ // menu was clicked during the last frame.
+ type AppBarOverflowActionClicked struct {
+-	Tag interface{}
++	Tag any
+ }
+ 
+ func (a AppBarOverflowActionClicked) AppBarEvent() {}
+diff --git a/x/component/nav_drawer.go b/x/component/nav_drawer.go
+index 97dc8646..bede2132 100644
+--- a/x/component/nav_drawer.go
++++ b/x/component/nav_drawer.go
+@@ -24,7 +24,7 @@ type NavItem struct {
+ 	// Tag is an externally-provided identifier for the view
+ 	// that this item should navigate to. It's value is
+ 	// opaque to navigation elements.
+-	Tag  interface{}
++	Tag  any
+ 	Name string
+ 
+ 	// Icon, if set, renders the provided icon to the left of the
+@@ -270,7 +270,7 @@ func (m *NavDrawer) changeSelected(newIndex int) {
+ 
+ // SetNavDestination changes the selected navigation item to the item with
+ // the provided tag. If the provided tag does not exist, it has no effect.
+-func (m *NavDrawer) SetNavDestination(tag interface{}) {
++func (m *NavDrawer) SetNavDestination(tag any) {
+ 	for i, item := range m.items {
+ 		if item.Tag == tag {
+ 			m.changeSelected(i)
+@@ -281,7 +281,7 @@ func (m *NavDrawer) SetNavDestination(tag interface{}) {
+ 
+ // CurrentNavDestination returns the tag of the navigation destination
+ // selected in the drawer.
+-func (m *NavDrawer) CurrentNavDestination() interface{} {
++func (m *NavDrawer) CurrentNavDestination() any {
+ 	return m.items[m.selectedItem].Tag
+ }
+ 
+diff --git a/x/component/tooltip_desktop.go b/x/component/tooltip_desktop.go
+index 182a0c56..8bdd3e52 100644
+--- a/x/component/tooltip_desktop.go
++++ b/x/component/tooltip_desktop.go
+@@ -1,5 +1,4 @@
+ //go:build !android && !ios
+-// +build !android,!ios
+ 
+ package component
+ 
+diff --git a/x/component/tooltip_mobile.go b/x/component/tooltip_mobile.go
+index f09220b1..0eb0fa8c 100644
+--- a/x/component/tooltip_mobile.go
++++ b/x/component/tooltip_mobile.go
+@@ -1,5 +1,4 @@
+ //go:build ios || android
+-// +build ios android
+ 
+ package component
+ 
+diff --git a/x/explorer/explorer.go b/x/explorer/explorer.go
+index 799ac287..dc0e5e3e 100644
+--- a/x/explorer/explorer.go
++++ b/x/explorer/explorer.go
+@@ -22,7 +22,7 @@ var (
+ )
+ 
+ type result struct {
+-	file  interface{}
++	file  any
+ 	error error
+ }
+ 
+diff --git a/x/explorer/explorer_ios.go b/x/explorer/explorer_ios.go
+index 14317389..a9bc8f1e 100644
+--- a/x/explorer/explorer_ios.go
++++ b/x/explorer/explorer_ios.go
+@@ -1,7 +1,6 @@
+ // SPDX-License-Identifier: Unlicense OR MIT
+ 
+ //go:build ios
+-// +build ios
+ 
+ package explorer
+ 
+diff --git a/x/explorer/explorer_linux.go b/x/explorer/explorer_linux.go
+index 8ccca2f6..7eb79d34 100644
+--- a/x/explorer/explorer_linux.go
++++ b/x/explorer/explorer_linux.go
+@@ -1,7 +1,6 @@
+ // SPDX-License-Identifier: Unlicense OR MIT
+ 
+ //go:build linux && !android
+-// +build linux,!android
+ 
+ package explorer
+ 
+diff --git a/x/explorer/explorer_macos.go b/x/explorer/explorer_macos.go
+index 6625796c..85148a23 100644
+--- a/x/explorer/explorer_macos.go
++++ b/x/explorer/explorer_macos.go
+@@ -1,7 +1,6 @@
+ // SPDX-License-Identifier: Unlicense OR MIT
+ 
+ //go:build darwin && !ios
+-// +build darwin,!ios
+ 
+ package explorer
+ 
+diff --git a/x/explorer/explorer_unsupported.go b/x/explorer/explorer_unsupported.go
+index 32cba478..9ae4c022 100644
+--- a/x/explorer/explorer_unsupported.go
++++ b/x/explorer/explorer_unsupported.go
+@@ -1,7 +1,6 @@
+ // SPDX-License-Identifier: Unlicense OR MIT
+ 
+ //go:build !windows && !android && !js && !darwin && !ios && !linux
+-// +build !windows,!android,!js,!darwin,!ios,!linux
+ 
+ package explorer
+ 
+diff --git a/x/haptic/haptic_android.go b/x/haptic/haptic_android.go
+index 8647b903..eaab56b9 100644
+--- a/x/haptic/haptic_android.go
++++ b/x/haptic/haptic_android.go
+@@ -1,5 +1,4 @@
+ //go:build android
+-// +build android
+ 
+ /*
+ Package haptic provides access to haptic feedback methods on Android to gio
+diff --git a/x/haptic/haptic_default.go b/x/haptic/haptic_default.go
+index 5b30763f..5990df9d 100644
+--- a/x/haptic/haptic_default.go
++++ b/x/haptic/haptic_default.go
+@@ -1,5 +1,4 @@
+ //go:build !android && !ios
+-// +build !android,!ios
+ 
+ package haptic
+ 
+diff --git a/x/haptic/haptic_ios.go b/x/haptic/haptic_ios.go
+index 21941c93..cd4ee232 100644
+--- a/x/haptic/haptic_ios.go
++++ b/x/haptic/haptic_ios.go
+@@ -1,5 +1,4 @@
+ //go:build ios && cgo
+-// +build ios,cgo
+ 
+ package haptic
+ 
+diff --git a/x/notify/notify_android.go b/x/notify/notify_android.go
+index a06c4069..92ceb18e 100644
+--- a/x/notify/notify_android.go
++++ b/x/notify/notify_android.go
+@@ -1,5 +1,4 @@
+ //go:build android
+-// +build android
+ 
+ package notify
+ 
+diff --git a/x/notify/notify_darwin.go b/x/notify/notify_darwin.go
+index fe987b7f..2ddee347 100644
+--- a/x/notify/notify_darwin.go
++++ b/x/notify/notify_darwin.go
+@@ -1,5 +1,4 @@
+ //go:build darwin
+-// +build darwin
+ 
+ package notify
+ 
+diff --git a/x/notify/notify_dbus.go b/x/notify/notify_dbus.go
+index 70f1639c..398b7afa 100644
+--- a/x/notify/notify_dbus.go
++++ b/x/notify/notify_dbus.go
+@@ -1,5 +1,4 @@
+ //go:build (linux && !android) || openbsd || freebsd || netbsd
+-// +build linux,!android openbsd freebsd netbsd
+ 
+ package notify
+ 
+diff --git a/x/notify/notify_unsupported.go b/x/notify/notify_unsupported.go
+index f572fdee..c7647c17 100644
+--- a/x/notify/notify_unsupported.go
++++ b/x/notify/notify_unsupported.go
+@@ -1,5 +1,4 @@
+ //go:build !linux && !android && !openbsd && !freebsd && !dragonfly && !netbsd && !darwin && !windows
+-// +build !linux,!android,!openbsd,!freebsd,!dragonfly,!netbsd,!darwin,!windows
+ 
+ package notify
+ 
+diff --git a/x/notify/notify_windows.go b/x/notify/notify_windows.go
+index 882efd8b..658eba1d 100644
+--- a/x/notify/notify_windows.go
++++ b/x/notify/notify_windows.go
+@@ -1,5 +1,4 @@
+ //go:build windows
+-// +build windows
+ 
+ package notify
+ 
+diff --git a/x/outlay/fan.go b/x/outlay/fan.go
+index cc9d8964..105b6e20 100644
+--- a/x/outlay/fan.go
++++ b/x/outlay/fan.go
+@@ -147,13 +147,6 @@ func (f *Fan) Layout(gtx layout.Context, items ...FanItem) layout.Dimensions {
+ 
+ }
+ 
+-func min(a, b int) int {
+-	if a < b {
+-		return a
+-	}
+-	return b
+-}
+-
+ func (f *Fan) layoutItem(gtx layout.Context, index int, params fanParams) layout.Dimensions {
+ 	arc := params.arc
+ 	radius := params.radius
+diff --git a/x/outlay/flow.go b/x/outlay/flow.go
+index 793686e1..b7b97e01 100644
+--- a/x/outlay/flow.go
++++ b/x/outlay/flow.go
+@@ -44,7 +44,7 @@ func (g FlowWrap) Layout(gtx layout.Context, num int, el FlowElement) layout.Dim
+ 	crossCs := axisCross(g.Axis, gtx.Constraints.Max)
+ 
+ 	var els []wrapData
+-	for i := 0; i < num; i++ {
++	for i := range num {
+ 		macro := op.Record(gtx.Ops)
+ 		dims, okMain, okCross := g.place(gtx, i, el)
+ 		if i == 0 {
+@@ -180,13 +180,6 @@ func (g *Flow) Layout(gtx layout.Context, num int, el FlowElement) layout.Dimens
+ 	})
+ }
+ 
+-func max(a, b int) int {
+-	if a > b {
+-		return a
+-	}
+-	return b
+-}
+-
+ func axisPoint(a layout.Axis, main, cross int) image.Point {
+ 	if a == layout.Horizontal {
+ 		return image.Point{main, cross}
+diff --git a/x/pref/battery/battery_unsupported.go b/x/pref/battery/battery_unsupported.go
+index 683765a2..111eaab2 100644
+--- a/x/pref/battery/battery_unsupported.go
++++ b/x/pref/battery/battery_unsupported.go
+@@ -1,5 +1,4 @@
+ //go:build !js && !windows && !android && !linux
+-// +build !js,!windows,!android,!linux
+ 
+ package battery
+ 
+diff --git a/x/pref/locale/locale_linux.go b/x/pref/locale/locale_linux.go
+index b4dc5f06..d0457e34 100644
+--- a/x/pref/locale/locale_linux.go
++++ b/x/pref/locale/locale_linux.go
+@@ -1,5 +1,4 @@
+ //go:build !android
+-// +build !android
+ 
+ package locale
+ 
+diff --git a/x/pref/locale/locale_unsupported.go b/x/pref/locale/locale_unsupported.go
+index 57928c19..6e2fdc2b 100644
+--- a/x/pref/locale/locale_unsupported.go
++++ b/x/pref/locale/locale_unsupported.go
+@@ -1,5 +1,4 @@
+ //go:build !js && !windows && !android && !linux
+-// +build !js,!windows,!android,!linux
+ 
+ package locale
+ 
+diff --git a/x/pref/theme/theme_unsupported.go b/x/pref/theme/theme_unsupported.go
+index f6bf91e1..7daa7f5e 100644
+--- a/x/pref/theme/theme_unsupported.go
++++ b/x/pref/theme/theme_unsupported.go
+@@ -1,5 +1,4 @@
+ //go:build !js && !windows && !android
+-// +build !js,!windows,!android
+ 
+ package theme
+ 
+diff --git a/x/richtext/richtext.go b/x/richtext/richtext.go
+index 5cf678a4..27b2f132 100644
+--- a/x/richtext/richtext.go
++++ b/x/richtext/richtext.go
+@@ -3,6 +3,7 @@ package richtext
+ 
+ import (
+ 	"image/color"
++	"maps"
+ 	"time"
+ 
+ 	"gioui.org/font"
+@@ -47,7 +48,7 @@ type InteractiveSpan struct {
+ 	longPressed  bool
+ 	pressStarted time.Time
+ 	contents     string
+-	metadata     map[string]interface{}
++	metadata     map[string]any
+ }
+ 
+ func (i *InteractiveSpan) Update(gtx layout.Context) (Event, bool) {
+@@ -112,12 +113,12 @@ func (i *InteractiveSpan) Layout(gtx layout.Context) layout.Dimensions {
+ 
+ // Content returns the text content of the interactive span as well as the
+ // metadata associated with it.
+-func (i *InteractiveSpan) Content() (string, map[string]interface{}) {
++func (i *InteractiveSpan) Content() (string, map[string]any) {
+ 	return i.contents, i.metadata
+ }
+ 
+ // Get looks up a metadata property on the interactive span.
+-func (i *InteractiveSpan) Get(key string) interface{} {
++func (i *InteractiveSpan) Get(key string) any {
+ 	return i.metadata[key]
+ }
+ 
+@@ -173,14 +174,14 @@ type SpanStyle struct {
+ 	Color          color.NRGBA
+ 	Content        string
+ 	Interactive    bool
+-	metadata       map[string]interface{}
++	metadata       map[string]any
+ 	interactiveIdx int
+ }
+ 
+ // Set configures a metadata key-value pair on the span that can be
+ // retrieved if the span is interacted with. If the provided value
+ // is empty, the key will be deleted from the metadata.
+-func (ss *SpanStyle) Set(key string, value interface{}) {
++func (ss *SpanStyle) Set(key string, value any) {
+ 	if value == "" {
+ 		if ss.metadata != nil {
+ 			delete(ss.metadata, key)
+@@ -191,7 +192,7 @@ func (ss *SpanStyle) Set(key string, value interface{}) {
+ 		return
+ 	}
+ 	if ss.metadata == nil {
+-		ss.metadata = make(map[string]interface{})
++		ss.metadata = make(map[string]any)
+ 	}
+ 	ss.metadata[key] = value
+ }
+@@ -200,10 +201,8 @@ func (ss *SpanStyle) Set(key string, value interface{}) {
+ func (ss SpanStyle) DeepCopy() SpanStyle {
+ 	out := ss
+ 	if len(ss.metadata) > 0 {
+-		md := make(map[string]interface{})
+-		for k, v := range ss.metadata {
+-			md[k] = v
+-		}
++		md := make(map[string]any)
++		maps.Copy(md, ss.metadata)
+ 		out.metadata = md
+ 	}
+ 	return out
+diff --git a/x/stroke/util_test.go b/x/stroke/util_test.go
+index 67e6467e..8b8e6fff 100644
+--- a/x/stroke/util_test.go
++++ b/x/stroke/util_test.go
+@@ -9,7 +9,7 @@ import (
+ 	"image"
+ 	"image/color"
+ 	"image/png"
+-	"io/ioutil"
++	"os"
+ 	"path/filepath"
+ 	"strconv"
+ 	"testing"
+@@ -50,7 +50,7 @@ func run(t *testing.T, f func(o *op.Ops), c func(r result)) {
+ 	var img *image.RGBA
+ 	var err error
+ 	ops := new(op.Ops)
+-	for i := 0; i < 3; i++ {
++	for i := range 3 {
+ 		ops.Reset()
+ 		img, err = drawImage(t, 128, ops, f)
+ 		if err != nil {
+@@ -72,7 +72,7 @@ func verifyRef(t *testing.T, img *image.RGBA, frame int) (ok bool) {
+ 	if frame != 0 {
+ 		path = filepath.Join("refs", t.Name()+"_"+strconv.Itoa(frame)+".png")
+ 	}
+-	b, err := ioutil.ReadFile(path)
++	b, err := os.ReadFile(path)
+ 	if err != nil {
+ 		t.Error("could not open ref:", err)
+ 		return
+@@ -197,7 +197,7 @@ func saveImage(t testing.TB, file string, img *image.RGBA) {
+ 		t.Error(err)
+ 		return
+ 	}
+-	if err := ioutil.WriteFile(file, buf.Bytes(), 0666); err != nil {
++	if err := os.WriteFile(file, buf.Bytes(), 0666); err != nil {
+ 		t.Error(err)
+ 		return
+ 	}
+diff --git a/x/styledtext/iterator.go b/x/styledtext/iterator.go
+index 6ff89847..e82f5685 100644
+--- a/x/styledtext/iterator.go
++++ b/x/styledtext/iterator.go
+@@ -1,6 +1,7 @@
+ package styledtext
+ 
+ import (
++	"cmp"
+ 	"image"
+ 
+ 	"gioui.org/layout"
+@@ -8,7 +9,6 @@ import (
+ 	"gioui.org/op/clip"
+ 	"gioui.org/op/paint"
+ 	"gioui.org/text"
+-	"golang.org/x/exp/constraints"
+ 	"golang.org/x/image/math/fixed"
+ )
+ 
+@@ -107,14 +107,14 @@ func (it *textIterator) processGlyph(g text.Glyph, ok bool) (_ text.Glyph, visib
+ 
+ }
+ 
+-func min[T constraints.Ordered](a, b T) T {
++func min[T cmp.Ordered](a, b T) T {
+ 	if a < b {
+ 		return a
+ 	}
+ 	return b
+ }
+ 
+-func max[T constraints.Ordered](a, b T) T {
++func max[T cmp.Ordered](a, b T) T {
+ 	if a > b {
+ 		return a
+ 	}
+-- 
+2.47.0.windows.2
+

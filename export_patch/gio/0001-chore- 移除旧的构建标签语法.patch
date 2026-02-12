@@ -1,0 +1,144 @@
+From 065a634e714edc490d16f967f00a60b33385e205 Mon Sep 17 00:00:00 2001
+From: ddkwork <2762713521@qq.com>
+Date: Wed, 11 Feb 2026 08:47:57 +0800
+Subject: [PATCH] chore: 移除旧的构建标签语法
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+---
+ app/egl_wayland.go              | 3 ---
+ app/egl_x11.go                  | 3 ---
+ app/os_wayland.go               | 2 --
+ app/os_x11.go                   | 2 --
+ app/vulkan.go                   | 2 --
+ app/vulkan_wayland.go           | 3 ---
+ app/vulkan_x11.go               | 3 ---
+ gpu/headless/headless_vulkan.go | 2 --
+ gpu/internal/vulkan/vulkan.go   | 2 --
+ 9 files changed, 22 deletions(-)
+
+diff --git a/app/egl_wayland.go b/app/egl_wayland.go
+index 005df894..913c534a 100644
+--- a/app/egl_wayland.go
++++ b/app/egl_wayland.go
+@@ -1,9 +1,6 @@
+ // SPDX-License-Identifier: Unlicense OR MIT
+ 
+ //go:build ((linux && !android) || freebsd) && !nowayland && !noopengl
+-// +build linux,!android freebsd
+-// +build !nowayland
+-// +build !noopengl
+ 
+ package app
+ 
+diff --git a/app/egl_x11.go b/app/egl_x11.go
+index b10b2581..b0d3b114 100644
+--- a/app/egl_x11.go
++++ b/app/egl_x11.go
+@@ -1,9 +1,6 @@
+ // SPDX-License-Identifier: Unlicense OR MIT
+ 
+ //go:build ((linux && !android) || freebsd || openbsd) && !nox11 && !noopengl
+-// +build linux,!android freebsd openbsd
+-// +build !nox11
+-// +build !noopengl
+ 
+ package app
+ 
+diff --git a/app/os_wayland.go b/app/os_wayland.go
+index b020c6d1..a15b1c6f 100644
+--- a/app/os_wayland.go
++++ b/app/os_wayland.go
+@@ -1,8 +1,6 @@
+ // SPDX-License-Identifier: Unlicense OR MIT
+ 
+ //go:build ((linux && !android) || freebsd) && !nowayland
+-// +build linux,!android freebsd
+-// +build !nowayland
+ 
+ package app
+ 
+diff --git a/app/os_x11.go b/app/os_x11.go
+index 24b0ed8e..46f69eaa 100644
+--- a/app/os_x11.go
++++ b/app/os_x11.go
+@@ -1,8 +1,6 @@
+ // SPDX-License-Identifier: Unlicense OR MIT
+ 
+ //go:build ((linux && !android) || freebsd || openbsd) && !nox11
+-// +build linux,!android freebsd openbsd
+-// +build !nox11
+ 
+ package app
+ 
+diff --git a/app/vulkan.go b/app/vulkan.go
+index f6550947..77247595 100644
+--- a/app/vulkan.go
++++ b/app/vulkan.go
+@@ -1,8 +1,6 @@
+ // SPDX-License-Identifier: Unlicense OR MIT
+ 
+ //go:build (linux || freebsd) && !novulkan
+-// +build linux freebsd
+-// +build !novulkan
+ 
+ package app
+ 
+diff --git a/app/vulkan_wayland.go b/app/vulkan_wayland.go
+index 7bf06628..67f7dba1 100644
+--- a/app/vulkan_wayland.go
++++ b/app/vulkan_wayland.go
+@@ -1,9 +1,6 @@
+ // SPDX-License-Identifier: Unlicense OR MIT
+ 
+ //go:build ((linux && !android) || freebsd) && !nowayland && !novulkan
+-// +build linux,!android freebsd
+-// +build !nowayland
+-// +build !novulkan
+ 
+ package app
+ 
+diff --git a/app/vulkan_x11.go b/app/vulkan_x11.go
+index cf977740..9f26d9e4 100644
+--- a/app/vulkan_x11.go
++++ b/app/vulkan_x11.go
+@@ -1,9 +1,6 @@
+ // SPDX-License-Identifier: Unlicense OR MIT
+ 
+ //go:build ((linux && !android) || freebsd) && !nox11 && !novulkan
+-// +build linux,!android freebsd
+-// +build !nox11
+-// +build !novulkan
+ 
+ package app
+ 
+diff --git a/gpu/headless/headless_vulkan.go b/gpu/headless/headless_vulkan.go
+index 18d5dfb6..9ada945b 100644
+--- a/gpu/headless/headless_vulkan.go
++++ b/gpu/headless/headless_vulkan.go
+@@ -1,8 +1,6 @@
+ // SPDX-License-Identifier: Unlicense OR MIT
+ 
+ //go:build (linux || freebsd) && !novulkan
+-// +build linux freebsd
+-// +build !novulkan
+ 
+ package headless
+ 
+diff --git a/gpu/internal/vulkan/vulkan.go b/gpu/internal/vulkan/vulkan.go
+index 4c39cb5f..1b4be3ad 100644
+--- a/gpu/internal/vulkan/vulkan.go
++++ b/gpu/internal/vulkan/vulkan.go
+@@ -1,8 +1,6 @@
+ // SPDX-License-Identifier: Unlicense OR MIT
+ 
+ //go:build (linux || freebsd) && !novulkan
+-// +build linux freebsd
+-// +build !novulkan
+ 
+ package vulkan
+ 
+-- 
+2.47.0.windows.2
+

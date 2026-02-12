@@ -1,0 +1,389 @@
+From a991bb084ade31366999e858da755c463cd65da0 Mon Sep 17 00:00:00 2001
+From: ddkwork <2762713521@qq.com>
+Date: Wed, 11 Feb 2026 10:01:50 +0800
+Subject: [PATCH] feat: 添加坐标转换支持并完善变换栈管理,todo :
+ bug,TestDeferredPaint 测试失败
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+---
+ io/input/pointer.go   |  31 +++++++--
+ io/pointer/pointer.go |  12 ++++
+ op/op.go              | 152 +++++++++++++++++++++++++++++++++++-------
+ 3 files changed, 167 insertions(+), 28 deletions(-)
+
+diff --git a/io/input/pointer.go b/io/input/pointer.go
+index c3e399f8..1aadec84 100644
+--- a/io/input/pointer.go
++++ b/io/input/pointer.go
+@@ -705,7 +705,10 @@ func (q *pointerQueue) Deliver(handlers map[event.Tag]*handler, areaIdx int, e p
+ 			}
+ 			scroll, e.Scroll = h.filter.pointer.clampScroll(scroll)
+ 		}
+-		e.Position = q.invTransform(h.pointer.areaPlusOne-1, e.Position)
++		// Get the transform for this handler's area
++		transform := q.getTransform(h.pointer.areaPlusOne - 1)
++		e.Transform = transform
++		e.Position = transform.Invert().Transform(e.Position)
+ 		evts = append(evts, taggedEvent{tag: n.tag, event: e})
+ 		if e.Kind != pointer.Scroll {
+ 			break
+@@ -714,6 +717,17 @@ func (q *pointerQueue) Deliver(handlers map[event.Tag]*handler, areaIdx int, e p
+ 	return evts
+ }
+ 
++// getTransform returns the accumulated transform for the given area.
++func (q *pointerQueue) getTransform(areaIdx int) f32.Affine2D {
++	transform := f32.AffineId()
++	for areaIdx != -1 {
++		a := &q.areas[areaIdx]
++		transform = transform.Mul(a.trans)
++		areaIdx = a.parent
++	}
++	return transform
++}
++
+ // SemanticArea returns the sematic content for area, and its parent area.
+ func (q *pointerQueue) SemanticArea(areaIdx int) (semanticContent, int) {
+ 	for areaIdx != -1 {
+@@ -801,7 +815,10 @@ func (q *pointerQueue) deliverEvent(handlers map[event.Tag]*handler, p pointerIn
+ 			scroll, e.Scroll = f.clampScroll(scroll)
+ 		}
+ 		e := e
+-		e.Position = q.invTransform(h.pointer.areaPlusOne-1, e.Position)
++		// Get the transform for this handler's area
++		transform := q.getTransform(h.pointer.areaPlusOne - 1)
++		e.Transform = transform
++		e.Position = transform.Invert().Transform(e.Position)
+ 		evts = append(evts, taggedEvent{event: e, tag: k})
+ 	}
+ 	return evts
+@@ -860,7 +877,10 @@ func (q *pointerQueue) deliverEnterLeaveEvents(handlers map[event.Tag]*handler,
+ 		e.Kind = pointer.Leave
+ 
+ 		if h.filter.pointer.Matches(e) {
+-			e.Position = q.invTransform(h.pointer.areaPlusOne-1, e.Position)
++			// Get the transform for this handler's area
++			transform := q.getTransform(h.pointer.areaPlusOne - 1)
++			e.Transform = transform
++			e.Position = transform.Invert().Transform(e.Position)
+ 			evts = append(evts, taggedEvent{tag: k, event: e})
+ 		}
+ 	}
+@@ -878,7 +898,10 @@ func (q *pointerQueue) deliverEnterLeaveEvents(handlers map[event.Tag]*handler,
+ 		e.Kind = pointer.Enter
+ 
+ 		if h.filter.pointer.Matches(e) {
+-			e.Position = q.invTransform(h.pointer.areaPlusOne-1, e.Position)
++			// Get the transform for this handler's area
++			transform := q.getTransform(h.pointer.areaPlusOne - 1)
++			e.Transform = transform
++			e.Position = transform.Invert().Transform(e.Position)
+ 			evts = append(evts, taggedEvent{tag: k, event: e})
+ 		}
+ 	}
+diff --git a/io/pointer/pointer.go b/io/pointer/pointer.go
+index a65f840c..30e752ac 100644
+--- a/io/pointer/pointer.go
++++ b/io/pointer/pointer.go
+@@ -39,6 +39,18 @@ type Event struct {
+ 	// Modifiers is the set of active modifiers when
+ 	// the mouse button was pressed.
+ 	Modifiers key.Modifiers
++
++	// Transform is the transformation matrix used to convert global coordinates
++	// to local coordinates. It can be used to convert local coordinates back to
++	// global coordinates by applying the inverse transform.
++	// This field is set by the input system when delivering events.
++	Transform f32.Affine2D
++}
++
++// AbsolutePosition returns the position in global window coordinates.
++// It applies the inverse of the Transform to the local Position.
++func (e Event) AbsolutePosition() f32.Point {
++	return e.Transform.Transform(e.Position)
+ }
+ 
+ // PassOp sets the pass-through mode. InputOps added while the pass-through
+diff --git a/op/op.go b/op/op.go
+index 33ff3676..27424f33 100644
+--- a/op/op.go
++++ b/op/op.go
+@@ -32,11 +32,11 @@ Drawing a colored square:
+ An Ops list can be viewed as a very simple virtual machine: it has state such
+ as transformation and color and execution flow can be controlled with macros.
+ 
+-Some state, such as the current color, is modified directly by operations with
++Some state, such as current color, is modified directly by operations with
+ Add methods. Other state, such as transformation and clip shape, are
+ represented by stacks.
+ 
+-This example sets the simple color state and pushes an offset to the
++This example sets a simple color state and pushes an offset to the
+ transformation stack.
+ 
+ 	ops := new(op.Ops)
+@@ -45,7 +45,7 @@ transformation stack.
+ 	// Apply an offset to subsequent operations.
+ 	stack := op.Offset(...).Push(ops)
+ 	...
+-	// Undo the offset transformation.
++	// Undo offset transformation.
+ 	stack.Pop()
+ 
+ The MacroOp records a list of operations to be executed later:
+@@ -65,6 +65,7 @@ package op
+ import (
+ 	"encoding/binary"
+ 	"image"
++	"log"
+ 	"math"
+ 	"time"
+ 
+@@ -74,10 +75,14 @@ import (
+ 
+ // Ops holds a list of operations. Operations are stored in
+ // serialized form to avoid garbage during construction of
+-// the ops list.
++// ops list.
+ type Ops struct {
+ 	// Internal is for internal use, despite being exported.
+ 	Internal ops.Ops
++	// currentTransform tracks current transformation for converting local coordinates to absolute coordinates
++	currentTransform f32.Affine2D
++	// transformStack tracks transformation matrix stack for proper restoration
++	transformStack []f32.Affine2D
+ }
+ 
+ // MacroOp records a list of operations for later use.
+@@ -87,7 +92,7 @@ type MacroOp struct {
+ 	pc  ops.PC
+ }
+ 
+-// CallOp invokes the operations recorded by Record.
++// CallOp invokes operations recorded by Record.
+ type CallOp struct {
+ 	// Ops is the list of operations to invoke.
+ 	ops   *ops.Ops
+@@ -95,13 +100,13 @@ type CallOp struct {
+ 	end   ops.PC
+ }
+ 
+-// InvalidateCmd requests a redraw at the given time. Use
+-// the zero value to request an immediate redraw.
++// InvalidateCmd requests a redraw at given time. Use
++// zero value to request an immediate redraw.
+ type InvalidateCmd struct {
+ 	At time.Time
+ }
+ 
+-// TransformOp represents a transformation that can be pushed on the
++// TransformOp represents a transformation that can be pushed on teh
+ // transformation stack.
+ type TransformOp struct {
+ 	t f32.Affine2D
+@@ -109,9 +114,47 @@ type TransformOp struct {
+ 
+ // TransformStack represents a TransformOp pushed on the transformation stack.
+ type TransformStack struct {
+-	id      ops.StackID
+-	macroID uint32
+-	ops     *ops.Ops
++	id        ops.StackID
++	macroID   uint32
++	ops       *ops.Ops
++	outerOps  *Ops         // Reference to outer Ops instance
++	transform f32.Affine2D // Save transform at push time
++}
++
++// GlobalTransform returns the current global transformation matrix.
++// This can be used to convert local coordinates to absolute coordinates.
++func (o *Ops) GlobalTransform() f32.Affine2D {
++	return o.currentTransform
++}
++
++// TransformToAbsolute converts a local point to absolute coordinates using the current transform.
++// It accumulates all transformations from the stack to get the true screen coordinates.
++func (o *Ops) TransformToAbsolute(local f32.Point) f32.Point {
++	// Start with identity transform
++	transform := f32.AffineId()
++
++	println("[TransformToAbsolute] local point:", local.X, local.Y)
++	println("[TransformToAbsolute] stack size:", len(o.transformStack))
++
++	// The transformStack contains the transforms that were active before each Push
++	// We need to accumulate them in order (from bottom to top)
++	for i, t := range o.transformStack {
++		transform = transform.Mul(t)
++		_, offset := t.Split()
++		println("  stack[", i, "] offset:", offset.X, offset.Y)
++	}
++
++	// Apply the current transform on top
++	transform = transform.Mul(o.currentTransform)
++	_, curOffset := o.currentTransform.Split()
++	_, finalOffset := transform.Split()
++	println("  currentTransform offset:", curOffset.X, curOffset.Y)
++	println("  final transform offset:", finalOffset.X, finalOffset.Y)
++
++	// Transform the local point to absolute coordinates
++	transformed := transform.Transform(local)
++	println("  transformed result:", transformed.X, transformed.Y)
++	return transformed
+ }
+ 
+ // Defer executes c after all other operations have completed, including
+@@ -120,31 +163,59 @@ type TransformStack struct {
+ // c. All other operation state is reset.
+ //
+ // Note that deferred operations are executed in first-in-first-out order,
+-// unlike the Go facility of the same name.
++// unlike Go facility of the same name.
+ func Defer(o *Ops, c CallOp) {
+ 	if c.ops == nil {
+ 		return
+ 	}
+-	state := ops.Save(&o.Internal)
++
++	// Save the current transform state before deferring
++	savedCurrentTransform := o.currentTransform
++	savedTransformStack := make([]f32.Affine2D, len(o.transformStack))
++	copy(savedTransformStack, o.transformStack)
++
++	_ = ops.Save(&o.Internal)
++
+ 	// Wrap c in a macro that loads the saved state before execution.
+ 	m := Record(o)
+-	state.Load()
++
++	// After loading state, restore our transform tracking
++	o.currentTransform = savedCurrentTransform
++	o.transformStack = make([]f32.Affine2D, len(savedTransformStack))
++	copy(o.transformStack, savedTransformStack)
++
+ 	c.Add(o)
+ 	c = m.Stop()
+-	// A Defer is recorded as a TypeDefer followed by the
++
++	// Restore transform tracking after macro recording
++	o.currentTransform = savedCurrentTransform
++	o.transformStack = make([]f32.Affine2D, len(savedTransformStack))
++	copy(o.transformStack, savedTransformStack)
++
++	// A Defer is recorded as a TypeDefer followed by teh
+ 	// wrapped macro.
+ 	data := ops.Write(&o.Internal, ops.TypeDeferLen)
+ 	data[0] = byte(ops.TypeDefer)
+ 	c.Add(o)
+ }
+ 
+-// Reset the Ops, preparing it for re-use. Reset invalidates
+-// any recorded macros.
++// Reset prepares Ops for re-use. Reset invalidates any recorded macros.
++// Note: We DON'T reset transformStack to allow TransformToAbsolute to work
++// in event handlers. The transformStack is naturally reset by Pop operations
++// when the layout frame completes.
+ func (o *Ops) Reset() {
+ 	ops.Reset(&o.Internal)
++	o.currentTransform = f32.AffineId()
++	// Don't reset transformStack - let it naturally reset as frames complete
++	// This allows TransformToAbsolute to work properly even after event handling
++	if len(o.transformStack) > 0 {
++		// Only clear if stack is stale (from previous frame)
++		// We detect this by checking if Reset is called when stack is non-empty
++		// which indicates a new frame is starting
++	}
+ }
+ 
+-// Record a macro of operations.
++// Record records a macro of operations.
+ func Record(o *Ops) MacroOp {
+ 	m := MacroOp{
+ 		ops: &o.Internal,
+@@ -170,8 +241,8 @@ func (m MacroOp) Stop() CallOp {
+ 	}
+ }
+ 
+-// Add the recorded list of operations. Add
+-// panics if the Ops containing the recording
++// Add recorded list of operations. Add
++// panics if Ops containing the recording
+ // has been reset.
+ func (c CallOp) Add(o *Ops) {
+ 	if c.ops == nil {
+@@ -186,23 +257,36 @@ func Offset(off image.Point) TransformOp {
+ 	return Affine(f32.AffineId().Offset(offf))
+ }
+ 
+-// Affine creates a TransformOp representing the transformation a.
++// Affine creates a TransformOp representing transformation a.
+ func Affine(a f32.Affine2D) TransformOp {
+ 	return TransformOp{t: a}
+ }
+ 
+-// Push the current transformation to the stack and then multiply the
++// Push current transformation to the stack and then multiply's
+ // current transformation with t.
+ func (t TransformOp) Push(o *Ops) TransformStack {
+ 	id, macroID := ops.PushOp(&o.Internal, ops.TransStack)
++	// Save current transform before applying new one
++	savedTransform := o.currentTransform
++	// Push onto the transform stack for proper restoration on Pop
++	o.transformStack = append(o.transformStack, savedTransform)
+ 	t.add(o, true)
+-	return TransformStack{ops: &o.Internal, id: id, macroID: macroID}
++	o.currentTransform = o.currentTransform.Mul(t.t)
++
++	// Get the actual offset part using Split
++	// _, savedPt := savedTransform.Split()
++	// _, newPt := o.currentTransform.Split()
++	// log.Printf("[TransformPush] stack=%d, before=(%.2f,%.2f), new=(%.2f,%.2f)",
++	// 	len(o.transformStack), savedPt.X, savedPt.Y, newPt.X, newPt.Y)
++
++	return TransformStack{ops: &o.Internal, outerOps: o, id: id, macroID: macroID, transform: savedTransform}
+ }
+ 
+-// Add is like Push except it doesn't push the current transformation to the
++// Add is like Push except it doesn't push current transformation to teh
+ // stack.
+ func (t TransformOp) Add(o *Ops) {
+ 	t.add(o, false)
++	o.currentTransform = o.currentTransform.Mul(t.t)
+ }
+ 
+ func (t TransformOp) add(o *Ops, push bool) {
+@@ -221,10 +305,30 @@ func (t TransformOp) add(o *Ops, push bool) {
+ 	bo.PutUint32(data[2+4*5:], math.Float32bits(f))
+ }
+ 
++// Pop restores the transformation state from the stack.
+ func (t TransformStack) Pop() {
+ 	ops.PopOp(t.ops, ops.TransStack, t.id, t.macroID)
+ 	data := ops.Write(t.ops, ops.TypePopTransformLen)
+ 	data[0] = byte(ops.TypePopTransform)
++	// Restore transform to the value saved at Push time
++	// We use t.transform which was saved when Push was called
++	if t.outerOps != nil {
++		// Pop from stack (must match the Push)
++		if len(t.outerOps.transformStack) > 0 {
++			t.outerOps.transformStack = t.outerOps.transformStack[:len(t.outerOps.transformStack)-1]
++		}
++		// Restore the saved transform
++		beforeTransform := t.outerOps.currentTransform
++		t.outerOps.currentTransform = t.transform
++
++		// Get the actual offset part using Split
++		_, beforePt := beforeTransform.Split()
++		_, afterPt := t.outerOps.currentTransform.Split()
++		return
++		log.Printf("[TransformPop] stack=%d, before=(%.2f,%.2f), after=(%.2f,%.2f)",
++			len(t.outerOps.transformStack), beforePt.X, beforePt.Y,
++			afterPt.X, afterPt.Y)
++	}
+ }
+ 
+ func (InvalidateCmd) ImplementsCommand() {}
+-- 
+2.47.0.windows.2
+

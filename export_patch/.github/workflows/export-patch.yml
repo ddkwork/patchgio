@@ -1,0 +1,40 @@
+name: Export Patches
+
+on:
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Git
+        run: |
+          git config format.encodeEmailHeaders false
+          git config core.quotepath false
+          git config i18n.logOutputEncoding utf-8
+
+      - name: Export Patches
+        run: |
+          mkdir -p patches
+          i=1
+          for hash in $(git rev-list --reverse origin/main..HEAD); do
+            subject=$(git log -1 --format="%s" "$hash")
+            # 清理文件名
+            safe=$(echo "$subject" | sed 's/[\\/:*?"<>|]/-/g' | cut -c1-50)
+            num=$(printf "%04d" $i)
+            filename="patches/${num}-${safe}.patch"
+            git format-patch -1 "$hash" --stdout > "$filename"
+            echo "$filename"
+            i=$((i+1))
+          done
+
+      - name: Upload Patches
+        uses: actions/upload-artifact@v4
+        with:
+          name: patches
+          path: patches/*.patch
+          retention-days: 7

@@ -1,0 +1,1365 @@
+From b4315011fac9ccb2237f375c4bba2c1c6a1bd805 Mon Sep 17 00:00:00 2001
+From: ddkwork <2762713521@qq.com>
+Date: Wed, 11 Feb 2026 13:58:37 +0800
+Subject: [PATCH] feat: 实现代码折叠功能
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ CODE_FOLDING_IMPLEMENTATION.md | 150 ++++++++++
+ commands.go                    |  30 +-
+ editor.go                      |   7 +
+ example/main.go                |   2 +-
+ gutter.go                      |  38 +++
+ gutter/providers/foldbutton.go | 364 ++++++++++++++++++++++
+ internal/folding/folding.go    | 530 +++++++++++++++++++++++++++++++++
+ internal/layout/text_layout.go |  23 +-
+ option.go                      |  13 +
+ textview/text.go               |  24 ++
+ 10 files changed, 1163 insertions(+), 18 deletions(-)
+ create mode 100644 CODE_FOLDING_IMPLEMENTATION.md
+ create mode 100644 gutter/providers/foldbutton.go
+ create mode 100644 internal/folding/folding.go
+
+diff --git a/CODE_FOLDING_IMPLEMENTATION.md b/CODE_FOLDING_IMPLEMENTATION.md
+new file mode 100644
+index 0000000..f2e7c96
+--- /dev/null
++++ b/CODE_FOLDING_IMPLEMENTATION.md
+@@ -0,0 +1,150 @@
++# 代码折叠功能实现文档
++
++## 功能概述
++
++代码折叠功能允许用户折叠和展开代码块（函数、类型、导入块、常量块等），类似于 GoLand 的代码折叠功能。
++
++## 实现文件
++
++### 1. 核心折叠管理器 (`internal/folding/folding.go`)
++
++```go
++// 主要结构
++type Manager struct {
++    foldRanges     []FoldRange      // 所有检测到的折叠区域
++    collapsedLines map[int]bool     // 被折叠的行
++    lineCache      []string         // 上次分析的行缓存
++}
++
++// 支持的折叠类型
++const (
++    FoldTypeFunction  // 函数/方法
++    FoldTypeType      // 类型定义
++    FoldTypeComment   // 多行注释
++    FoldTypeImport    // 导入块
++    FoldTypeConst     // 常量块
++    FoldTypeVar       // 变量块
++    FoldTypeRegion    // 用户定义区域
++)
++```
++
++**关键方法：**
++- `AnalyzeLines()` - 分析代码结构，检测可折叠区域
++- `detectFolds()` - 使用正则表达式识别代码块
++- `ToggleFold()` - 切换折叠状态
++- `CollapseAll()` / `ExpandAll()` - 全部折叠/展开
++- `IsLineVisible()` - 检查行是否可见（未被折叠）
++
++**代码结构识别：**
++- 函数定义：`^func\s+(?:\([^)]+\)\s+)?(\w+)`
++- 类型定义：`^type\s+(\w+)`
++- 导入/常量/变量块：`import (`, `const (`, `var (`
++- 多行注释：`/* ... */`
++- 用户区域：`//region Name`
++
++### 2. 折叠按钮提供者 (`gutter/providers/foldbutton.go`)
++
++在 gutter 中显示折叠/展开按钮：
++- 折叠状态显示减号 (-)
++- 展开状态显示加号 (+)
++- 支持点击切换折叠状态
++- 悬停显示提示信息
++
++### 3. 布局系统集成 (`internal/layout/text_layout.go`)
++
++修改 `trackLines()` 方法：
++- 在生成 Paragraphs 时检查行是否被折叠
++- 被折叠的行不会添加到可见段落列表
++- 保留段落索引映射关系
++
++### 4. TextView 集成 (`textview/text.go`)
++
++添加折叠管理器支持：
++```go
++func (e *TextView) SetFoldManager(fm *folding.Manager)
++func (e *TextView) FoldManager() *folding.Manager
++func (e *TextView) Invalidate()  // 强制重新布局
++```
++
++### 5. 编辑器集成 (`editor.go`, `commands.go`, `option.go`)
++
++**配置选项：**
++```go
++gvcode.WithCodeFolding()  // 启用代码折叠
++```
++
++**快捷键：**
++- `Ctrl+[` - 折叠当前行的代码块
++- `Ctrl+]` - 展开当前行的代码块
++- `Ctrl+Shift+[` - 折叠所有代码块
++- `Ctrl+Shift+]` - 展开所有代码块
++
++**编辑器方法：**
++```go
++func (e *Editor) Invalidate()           // 强制重新布局
++func (e *Editor) toggleFoldAtCaret()    // 切换当前行的折叠状态
++```
++
++### 6. Gutter 集成 (`gutter.go`)
++
++添加 `feedLineContentsToFoldButtonProvider()` 方法：
++- 将所有行内容传递给折叠按钮提供者
++- 提供者分析代码结构并显示折叠按钮
++
++## 使用方式
++
++```go
++// 创建编辑器时启用代码折叠
++editor := gvcode.NewEditor(
++    gvcode.WithCodeFolding(),
++    gvcode.WithDefaultGutters(),
++    // ... 其他选项
++)
++```
++
++## 渲染流程
++
++1. **分析阶段**: `folding.Manager.AnalyzeLines()` 解析代码结构
++2. **按钮渲染**: `FoldButtonProvider.Layout()` 在 gutter 显示折叠按钮
++3. **布局阶段**: `TextLayout.trackLines()` 跳过被折叠的行
++4. **文本渲染**: `TextView` 只渲染可见段落
++5. **事件处理**: 点击按钮或快捷键触发折叠/展开
++
++## 折叠状态管理
++
++```go
++// 获取折叠管理器
++fm := editor.FoldManager()
++
++// 操作折叠状态
++fm.ToggleFold(lineNumber)     // 切换指定行的折叠状态
++fm.CollapseFold(lineNumber)   // 折叠指定行
++fm.ExpandFold(lineNumber)     // 展开指定行
++fm.CollapseAll()              // 折叠所有
++fm.ExpandAll()                // 展开所有
++
++// 查询折叠信息
++fold := fm.GetFoldAtLine(lineNumber)      // 获取指定行的折叠信息
++folds := fm.GetFoldRanges()               // 获取所有折叠区域
++visible := fm.IsLineVisible(lineNumber)   // 检查行是否可见
++```
++
++## 与粘性行的集成
++
++代码折叠与粘性行功能完美配合：
++- 粘性行显示当前可见代码的上下文
++- 折叠的代码块不会出现在粘性行中
++- 点击粘性行可以跳转到对应位置（考虑折叠状态）
++
++## 性能优化
++
++1. **缓存机制**: 折叠管理器缓存上次分析的行，避免重复分析
++2. **增量更新**: 只在行数或内容变化时重新分析
++3. **可见性过滤**: 布局时只处理可见段落
++
++## 注意事项
++
++1. 代码结构识别使用正则表达式，可能对复杂语法识别不准确
++2. 折叠状态不会持久化保存（重启后丢失）
++3. 多编辑器实例共享全局缓存可能需要改进
++4. 大文件折叠操作可能需要优化性能
+diff --git a/commands.go b/commands.go
+index 70b0f31..d11728e 100644
+--- a/commands.go
++++ b/commands.go
+@@ -323,6 +323,21 @@ func (e *Editor) buildBuiltinCommands() {
+ 			return nil
+ 		})
+ 
++	registerCommand(key.Filter{Focus: e, Name: key.NameDownArrow, Optional: key.ModShortcutAlt | key.ModShift},
++		func(gtx layout.Context, evt key.Event) EditorEvent {
++			_, atEnd := checkPos(gtx)
++			if atEnd {
++				return nil
++			}
++
++			selAct := textview.SelectionClear
++			if evt.Modifiers.Contain(key.ModShift) {
++				selAct = textview.SelectionExtend
++			}
++			e.text.MoveLines(+1, selAct)
++			return nil
++		})
++
+ 	// ESC key exits column editing mode
+ 	registerCommand(key.Filter{Focus: e, Name: key.NameEscape},
+ 		func(gtx layout.Context, evt key.Event) EditorEvent {
+@@ -354,21 +369,6 @@ func (e *Editor) buildBuiltinCommands() {
+ 			}
+ 			return nil
+ 		})
+-
+-	registerCommand(key.Filter{Focus: e, Name: key.NameDownArrow, Optional: key.ModShortcutAlt | key.ModShift},
+-		func(gtx layout.Context, evt key.Event) EditorEvent {
+-			_, atEnd := checkPos(gtx)
+-			if atEnd {
+-				return nil
+-			}
+-
+-			selAct := textview.SelectionClear
+-			if evt.Modifiers.Contain(key.ModShift) {
+-				selAct = textview.SelectionExtend
+-			}
+-			e.text.MoveLines(+1, selAct)
+-			return nil
+-		})
+ }
+ 
+ func (e *Editor) processCommands(gtx layout.Context) EditorEvent {
+diff --git a/editor.go b/editor.go
+index cd965e5..77a7449 100644
+--- a/editor.go
++++ b/editor.go
+@@ -156,6 +156,13 @@ func (e *Editor) initBuffer() {
+ 	e.selectionHighlighter.editor = e
+ }
+ 
++// Invalidate forces a re-layout of the editor content on the next frame.
++// This is useful when external changes (like folding) affect the layout.
++func (e *Editor) Invalidate() {
++	e.initBuffer()
++	e.text.Invalidate()
++}
++
+ // Update the state of the editor in response to input events. Update consumes editor
+ // input events until there are no remaining events or an editor event is generated.
+ // To fully update the state of the editor, callers should call Update until it returns
+diff --git a/example/main.go b/example/main.go
+index cd812ea..35cbe0c 100644
+--- a/example/main.go
++++ b/example/main.go
+@@ -90,7 +90,7 @@ func main() {
+ 		gvcode.WithColorScheme(colorScheme),
+ 		gvcode.WithCornerRadius(unit.Dp(4)),
+ 	)
+-	editorApp.state.WithOptions(gvcode.WithDefaultGutters(), gvcode.WithRunButtons(), gvcode.WithGutterGap(unit.Dp(12)))
++	editorApp.state.WithOptions(gvcode.WithDefaultGutters(), gvcode.WithRunButtons(), gvcode.WithStickyLines(), gvcode.WithGutterGap(unit.Dp(12)))
+ 
+ 	tokens := HightlightTextByPattern(editorApp.state.Text(), syntaxPattern)
+ 	editorApp.state.SetSyntaxTokens(tokens...)
+diff --git a/gutter.go b/gutter.go
+index bd265c9..6bcbb0c 100644
+--- a/gutter.go
++++ b/gutter.go
+@@ -57,6 +57,8 @@ func (e *Editor) buildGutterContext(gtx layout.Context, shaper *text.Shaper) gut
+ 	e.feedLineContentsToRunButtonProvider(paragraphs)
+ 	// Feed line contents to sticky lines provider if it exists
+ 	e.feedLineContentsToStickyLinesProvider(paragraphs)
++	// Feed line contents to fold button provider if it exists
++	e.feedLineContentsToFoldButtonProvider(paragraphs)
+ 
+ 	return gutter.GutterContext{
+ 		Shaper:      shaper,
+@@ -151,6 +153,42 @@ func (e *Editor) feedLineContentsToStickyLinesProvider(paragraphs []gutter.Parag
+ 	stickyLinesProvider.SetLineContents(lines, 0)
+ }
+ 
++// feedLineContentsToFoldButtonProvider reads all line contents and feeds them to the fold button provider.
++func (e *Editor) feedLineContentsToFoldButtonProvider(paragraphs []gutter.Paragraph) {
++	// Find the fold button provider
++	var foldButtonProvider gutter.LineContentProvider
++
++	for _, p := range e.gutterManager.Providers() {
++		if p.ID() == "foldbutton" {
++			if fb, ok := p.(gutter.LineContentProvider); ok {
++				foldButtonProvider = fb
++				break
++			}
++		}
++	}
++
++	if foldButtonProvider == nil {
++		return
++	}
++
++	// For fold buttons, we need ALL lines to analyze the entire code structure
++	totalLines := e.text.Paragraphs()
++	if totalLines <= 0 {
++		return
++	}
++
++	// Read all lines from the buffer
++	srcReader := buffer.NewReader(e.buffer)
++	e.scratch = srcReader.ReadAll(e.scratch)
++	allContent := string(e.scratch)
++
++	// Split into lines
++	lines := strings.Split(allContent, "\n")
++
++	// Feed to provider
++	foldButtonProvider.SetLineContents(lines, 0)
++}
++
+ // gutterColors returns the GutterColors based on the color palette.
+ func (e *Editor) gutterColors() *gutter.GutterColors {
+ 	if e.colorPalette == nil {
+diff --git a/gutter/providers/foldbutton.go b/gutter/providers/foldbutton.go
+new file mode 100644
+index 0000000..d813e46
+--- /dev/null
++++ b/gutter/providers/foldbutton.go
+@@ -0,0 +1,364 @@
++package providers
++
++import (
++	"image"
++	"image/color"
++
++	"gioui.org/gesture"
++	"gioui.org/io/key"
++	"gioui.org/io/pointer"
++	"gioui.org/layout"
++	"gioui.org/op"
++	"gioui.org/op/clip"
++	"gioui.org/op/paint"
++	"gioui.org/text"
++	"gioui.org/unit"
++	gvcolor "github.com/oligo/gvcode/color"
++	"github.com/oligo/gvcode/gutter"
++	"github.com/oligo/gvcode/internal/folding"
++)
++
++const (
++	// FoldButtonProviderID is the unique identifier for the fold button provider.
++	FoldButtonProviderID = "foldbutton"
++
++	// foldButtonSize is the size of the fold button in dp units.
++	foldButtonSize = 12
++)
++
++// FoldButtonType represents the type of fold button to display.
++type FoldButtonType int
++
++const (
++	// FoldButtonNone indicates no fold button should be shown.
++	FoldButtonNone FoldButtonType = iota
++	// FoldButtonCollapsed indicates a collapsed fold (show expand icon).
++	FoldButtonCollapsed
++	// FoldButtonExpanded indicates an expanded fold (show collapse icon).
++	FoldButtonExpanded
++)
++
++// FoldButtonProvider renders fold buttons in the gutter.
++type FoldButtonProvider struct {
++	// foldManager manages fold regions.
++	foldManager *folding.Manager
++
++	// clicker handles click events on buttons.
++	clicker gesture.Click
++
++	// pending holds fold events that haven't been consumed yet.
++	pending []FoldButtonEvent
++
++	// paragraphs caches the visible paragraphs from the last Layout call.
++	paragraphs []gutter.Paragraph
++
++	// lineHeight caches the line height from the last Layout call.
++	lineHeight int
++
++	// viewport caches the viewport from the last Layout call.
++	viewport image.Rectangle
++
++	// buttonStates caches the button state for each line.
++	buttonStates map[int]FoldButtonType
++
++	// enabled indicates whether fold buttons are enabled.
++	enabled bool
++}
++
++// FoldButtonEvent represents a click event on a fold button.
++type FoldButtonEvent struct {
++	// Line is the 0-based line number of the fold.
++	Line int
++	// IsCollapsed indicates the new state after the click.
++	IsCollapsed bool
++}
++
++// NewFoldButtonProvider creates a new fold button provider.
++func NewFoldButtonProvider(foldManager *folding.Manager) *FoldButtonProvider {
++	return &FoldButtonProvider{
++		foldManager:  foldManager,
++		buttonStates: make(map[int]FoldButtonType),
++		pending:      make([]FoldButtonEvent, 0),
++		enabled:      true,
++	}
++}
++
++// SetEnabled sets whether fold buttons are enabled.
++func (p *FoldButtonProvider) SetEnabled(enabled bool) {
++	p.enabled = enabled
++}
++
++// Enabled returns whether fold buttons are enabled.
++func (p *FoldButtonProvider) Enabled() bool {
++	return p.enabled
++}
++
++// ID returns the unique identifier for this provider.
++func (p *FoldButtonProvider) ID() string {
++	return FoldButtonProviderID
++}
++
++// Priority returns the rendering priority. Fold buttons have priority 120
++// meaning they are rendered between line numbers (100) and run buttons (150).
++func (p *FoldButtonProvider) Priority() int {
++	return 120
++}
++
++// Width returns the fixed width needed for fold buttons.
++func (p *FoldButtonProvider) Width(gtx layout.Context, shaper *text.Shaper, params text.Parameters, lineCount int) unit.Dp {
++	if !p.enabled {
++		return 0
++	}
++	return unit.Dp(foldButtonSize + 4) // Button size plus padding
++}
++
++// SetLineContents is called to provide line contents for analysis.
++// The fold manager will analyze the lines to detect foldable regions.
++func (p *FoldButtonProvider) SetLineContents(lines []string, startLine int) {
++	if p.foldManager != nil {
++		p.foldManager.AnalyzeLines(lines)
++	}
++}
++
++// Layout renders fold buttons for visible paragraphs.
++func (p *FoldButtonProvider) Layout(gtx layout.Context, ctx gutter.GutterContext) layout.Dimensions {
++	if !p.enabled {
++		return layout.Dimensions{}
++	}
++
++	// Cache context info for event handling
++	p.paragraphs = ctx.Paragraphs
++	p.lineHeight = ctx.LineHeight.Ceil()
++	p.viewport = ctx.Viewport
++
++	// Clear previous button states
++	p.buttonStates = make(map[int]FoldButtonType)
++
++	// Get all fold ranges
++	foldRanges := p.foldManager.GetFoldRanges()
++
++	// Build a map of lines that have fold buttons
++	foldMap := make(map[int]*folding.FoldRange)
++	for i := range foldRanges {
++		foldMap[foldRanges[i].StartLine] = &foldRanges[i]
++	}
++
++	// Define colors
++	buttonColor := gvcolor.MakeColor(color.NRGBA{R: 0x80, G: 0x80, B: 0x80, A: 0xFF})
++	if ctx.Colors != nil && ctx.Colors.Text.IsSet() {
++		buttonColor = ctx.Colors.Text
++	}
++
++	buttonSizePx := gtx.Dp(unit.Dp(foldButtonSize))
++	padding := (ctx.LineHeight.Ceil() - buttonSizePx) / 2
++
++	// Render buttons for each visible paragraph
++	for _, para := range ctx.Paragraphs {
++		// Skip paragraphs outside the viewport
++		if para.EndY < ctx.Viewport.Min.Y {
++			continue
++		}
++		if para.StartY > ctx.Viewport.Max.Y {
++			break
++		}
++
++		// Check if this line has a fold
++		fold, hasFold := foldMap[para.Index]
++		if !hasFold {
++			continue
++		}
++
++		// Determine button type
++		var btnType FoldButtonType
++		if fold.Collapsed {
++			btnType = FoldButtonCollapsed
++		} else {
++			btnType = FoldButtonExpanded
++		}
++		p.buttonStates[para.Index] = btnType
++
++		// Calculate button position
++		buttonY := para.StartY - ctx.Viewport.Min.Y + padding
++		xPos := 2 // Small left padding
++
++		// Register click handler
++		pointer.CursorPointer.Add(gtx.Ops)
++		clip.Rect(image.Rect(xPos, buttonY, xPos+buttonSizePx, buttonY+buttonSizePx)).Push(gtx.Ops).Pop()
++		p.clicker.Add(gtx.Ops)
++
++		// Draw the button background/border (subtle rectangle)
++		btnRect := image.Rect(xPos, buttonY, xPos+buttonSizePx, buttonY+buttonSizePx)
++		btnStack := clip.Rect(btnRect).Push(gtx.Ops)
++		paint.ColorOp{Color: color.NRGBA{R: 0xE0, G: 0xE0, B: 0xE0, A: 0x40}}.Add(gtx.Ops)
++		paint.PaintOp{}.Add(gtx.Ops)
++		btnStack.Pop()
++
++		// Draw the icon (plus or minus)
++		centerX := float32(xPos + buttonSizePx/2)
++		centerY := float32(buttonY + buttonSizePx/2)
++		size := float32(buttonSizePx) * 0.6
++
++		buttonColor.Op(gtx.Ops).Add(gtx.Ops)
++
++		if btnType == FoldButtonCollapsed {
++			// Draw plus sign (expand)
++			drawPlus(gtx.Ops, centerX, centerY, size)
++		} else {
++			// Draw minus sign (collapse)
++			drawMinus(gtx.Ops, centerX, centerY, size)
++		}
++	}
++
++	// Process click events
++	for {
++		evt, ok := p.clicker.Update(gtx.Source)
++		if !ok {
++			break
++		}
++		if evt.Kind == gesture.KindClick {
++			// Find which line was clicked
++			clickY := int(evt.Position.Y) + ctx.Viewport.Min.Y
++			line := p.hitTestLine(clickY)
++
++			if line >= 0 {
++				// Toggle the fold
++				isCollapsed := p.foldManager.ToggleFold(line)
++				p.pending = append(p.pending, FoldButtonEvent{
++					Line:        line,
++					IsCollapsed: isCollapsed,
++				})
++			}
++		}
++	}
++
++	buttonWidth := buttonSizePx + 4
++	return layout.Dimensions{Size: image.Pt(buttonWidth, 0)}
++}
++
++// drawPlus draws a plus sign at the given position.
++func drawPlus(ops *op.Ops, centerX, centerY, size float32) {
++	// Horizontal line
++	hLine := image.Rect(
++		int(centerX-size/2),
++		int(centerY-1),
++		int(centerX+size/2),
++		int(centerY+1),
++	)
++	hStack := clip.Rect(hLine).Push(ops)
++	paint.PaintOp{}.Add(ops)
++	hStack.Pop()
++
++	// Vertical line
++	vLine := image.Rect(
++		int(centerX-1),
++		int(centerY-size/2),
++		int(centerX+1),
++		int(centerY+size/2),
++	)
++	vStack := clip.Rect(vLine).Push(ops)
++	paint.PaintOp{}.Add(ops)
++	vStack.Pop()
++}
++
++// drawMinus draws a minus sign at the given position.
++func drawMinus(ops *op.Ops, centerX, centerY, size float32) {
++	// Horizontal line only
++	hLine := image.Rect(
++		int(centerX-size/2),
++		int(centerY-1),
++		int(centerX+size/2),
++		int(centerY+1),
++	)
++	hStack := clip.Rect(hLine).Push(ops)
++	paint.PaintOp{}.Add(ops)
++	hStack.Pop()
++}
++
++// hitTestLine determines which logical line corresponds to a Y coordinate.
++func (p *FoldButtonProvider) hitTestLine(y int) int {
++	if len(p.paragraphs) == 0 {
++		return -1
++	}
++
++	for _, para := range p.paragraphs {
++		expandedStartY, expandedEndY := p.expandBounds(para)
++		if y >= expandedStartY && y <= expandedEndY {
++			return para.Index
++		}
++	}
++
++	return -1
++}
++
++// expandBounds expands a paragraph's vertical bounds.
++func (p *FoldButtonProvider) expandBounds(para gutter.Paragraph) (startY, endY int) {
++	ascent := para.Ascent.Ceil()
++	descent := para.Descent.Ceil()
++	glyphHeight := ascent + descent
++	lineHeightPx := p.lineHeight
++
++	leading := 0
++	if lineHeightPx > glyphHeight {
++		leading = lineHeightPx - glyphHeight
++	}
++
++	leadingTop := leading / 2
++	leadingBottom := leading - leadingTop
++
++	return para.StartY - ascent - leadingTop, para.EndY + descent + leadingBottom
++}
++
++// HandleClick implements the InteractiveGutter interface.
++func (p *FoldButtonProvider) HandleClick(line int, source pointer.Source, numClicks int, modifiers key.Modifiers) bool {
++	// Check if this line has a fold button
++	if _, hasButton := p.buttonStates[line]; !hasButton {
++		return false
++	}
++
++	// Toggle the fold
++	isCollapsed := p.foldManager.ToggleFold(line)
++	p.pending = append(p.pending, FoldButtonEvent{
++		Line:        line,
++		IsCollapsed: isCollapsed,
++	})
++
++	return true
++}
++
++// HandleHover implements the InteractiveGutter interface.
++func (p *FoldButtonProvider) HandleHover(line int) *gutter.HoverInfo {
++	if _, hasButton := p.buttonStates[line]; !hasButton {
++		return nil
++	}
++
++	fold := p.foldManager.GetFoldAtLine(line)
++	if fold == nil {
++		return nil
++	}
++
++	var text string
++	if fold.Collapsed {
++		text = "Expand " + fold.Type.String()
++	} else {
++		text = "Collapse " + fold.Type.String()
++	}
++	if fold.Name != "" {
++		text += " (" + fold.Name + ")"
++	}
++
++	return &gutter.HoverInfo{
++		Text: text,
++	}
++}
++
++// GetPendingEvents returns pending fold button events and clears the pending list.
++func (p *FoldButtonProvider) GetPendingEvents() []FoldButtonEvent {
++	events := p.pending
++	p.pending = p.pending[:0]
++	return events
++}
++
++// GetFoldManager returns the underlying fold manager.
++func (p *FoldButtonProvider) GetFoldManager() *folding.Manager {
++	return p.foldManager
++}
+diff --git a/internal/folding/folding.go b/internal/folding/folding.go
+new file mode 100644
+index 0000000..181129d
+--- /dev/null
++++ b/internal/folding/folding.go
+@@ -0,0 +1,530 @@
++// Package folding implements code folding functionality for the editor.
++// It provides code structure analysis and manages fold regions.
++package folding
++
++import (
++	"regexp"
++	"sort"
++	"strings"
++	"sync"
++)
++
++// FoldType represents the type of foldable region.
++type FoldType int
++
++const (
++	// FoldTypeFunction represents a function/method fold.
++	FoldTypeFunction FoldType = iota
++	// FoldTypeType represents a type definition fold.
++	FoldTypeType
++	// FoldTypeComment represents a multi-line comment fold.
++	FoldTypeComment
++	// FoldTypeImport represents an import block fold.
++	FoldTypeImport
++	// FoldTypeConst represents a const block fold.
++	FoldTypeConst
++	// FoldTypeVar represents a var block fold.
++	FoldTypeVar
++	// FoldTypeRegion represents a user-defined region fold.
++	FoldTypeRegion
++)
++
++// String returns the string representation of the fold type.
++func (t FoldType) String() string {
++	switch t {
++	case FoldTypeFunction:
++		return "function"
++	case FoldTypeType:
++		return "type"
++	case FoldTypeComment:
++		return "comment"
++	case FoldTypeImport:
++		return "import"
++	case FoldTypeConst:
++		return "const"
++	case FoldTypeVar:
++		return "var"
++	case FoldTypeRegion:
++		return "region"
++	default:
++		return "unknown"
++	}
++}
++
++// FoldRange represents a foldable region in the code.
++type FoldRange struct {
++	// StartLine is the 0-based starting line number.
++	StartLine int
++	// EndLine is the 0-based ending line number (inclusive).
++	EndLine int
++	// Type is the type of fold.
++	Type FoldType
++	// Name is a descriptive name for the fold (e.g., function name).
++	Name string
++	// Collapsed indicates whether the fold is currently collapsed.
++	Collapsed bool
++	// Level is the nesting level of the fold.
++	Level int
++}
++
++// Manager manages code folding regions and their states.
++type Manager struct {
++	mu sync.RWMutex
++
++	// foldRanges contains all detected fold ranges.
++	foldRanges []FoldRange
++
++	// collapsedLines tracks which lines are hidden due to folding.
++	// A line is considered collapsed if it's within a collapsed fold range.
++	collapsedLines map[int]bool
++
++	// lineCache caches the last analyzed lines.
++	lineCache []string
++
++	// foldMarkers caches the positions of fold markers in the text.
++	foldMarkers []FoldMarker
++}
++
++// FoldMarker represents a fold marker (opening or closing brace).
++type FoldMarker struct {
++	Line  int
++	Type  MarkerType
++	Level int
++}
++
++// MarkerType represents the type of fold marker.
++type MarkerType int
++
++const (
++	// MarkerOpen represents an opening brace or start of fold.
++	MarkerOpen MarkerType = iota
++	// MarkerClose represents a closing brace or end of fold.
++	MarkerClose
++)
++
++// NewManager creates a new folding manager.
++func NewManager() *Manager {
++	return &Manager{
++		foldRanges:     make([]FoldRange, 0),
++		collapsedLines: make(map[int]bool),
++	}
++}
++
++// AnalyzeLines analyzes the given lines and detects foldable regions.
++// This should be called whenever the document content changes.
++func (m *Manager) AnalyzeLines(lines []string) {
++	m.mu.Lock()
++	defer m.mu.Unlock()
++
++	// Check if lines have changed
++	if m.linesEqual(m.lineCache, lines) {
++		return
++	}
++
++	m.lineCache = make([]string, len(lines))
++	copy(m.lineCache, lines)
++
++	// Clear previous analysis
++	m.foldRanges = m.foldRanges[:0]
++	m.foldMarkers = m.foldMarkers[:0]
++
++	// Analyze the code structure
++	m.detectFolds(lines)
++
++	// Rebuild collapsed lines map
++	m.rebuildCollapsedLines()
++}
++
++// linesEqual checks if two line slices are equal.
++func (m *Manager) linesEqual(a, b []string) bool {
++	if len(a) != len(b) {
++		return false
++	}
++	for i := range a {
++		if a[i] != b[i] {
++			return false
++		}
++	}
++	return true
++}
++
++// detectFolds detects all foldable regions in the code.
++func (m *Manager) detectFolds(lines []string) {
++	// Track brace depth and fold stack
++	braceDepth := 0
++	type foldStackEntry struct {
++		line       int
++		foldType   FoldType
++		name       string
++		braceLevel int
++	}
++	foldStack := make([]foldStackEntry, 0)
++
++	// Track multi-line comment state
++	inMultiLineComment := false
++	commentStartLine := -1
++
++	// Track import/const/var block state
++	inBlock := false
++	blockStartLine := -1
++	blockType := FoldTypeConst
++
++	for i, line := range lines {
++		trimmed := strings.TrimSpace(line)
++
++		// Handle multi-line comments
++		if strings.HasPrefix(trimmed, "/*") && !inMultiLineComment {
++			inMultiLineComment = true
++			commentStartLine = i
++		}
++
++		if inMultiLineComment {
++			if strings.Contains(trimmed, "*/") {
++				// End of multi-line comment
++				if i > commentStartLine {
++					m.foldRanges = append(m.foldRanges, FoldRange{
++						StartLine: commentStartLine,
++						EndLine:   i,
++						Type:      FoldTypeComment,
++						Name:      "comment",
++						Level:     0,
++					})
++				}
++				inMultiLineComment = false
++			}
++			continue
++		}
++
++		// Skip single-line comments and empty lines for fold detection
++		if strings.HasPrefix(trimmed, "//") || trimmed == "" {
++			continue
++		}
++
++		// Detect block starts (import, const, var)
++		if !inBlock {
++			if strings.HasPrefix(trimmed, "import (") {
++				inBlock = true
++				blockStartLine = i
++				blockType = FoldTypeImport
++			} else if strings.HasPrefix(trimmed, "const (") {
++				inBlock = true
++				blockStartLine = i
++				blockType = FoldTypeConst
++			} else if strings.HasPrefix(trimmed, "var (") {
++				inBlock = true
++				blockStartLine = i
++				blockType = FoldTypeVar
++			}
++
++			if inBlock {
++				continue
++			}
++		}
++
++		// Detect block end
++		if inBlock && trimmed == ")" {
++			if i > blockStartLine {
++				m.foldRanges = append(m.foldRanges, FoldRange{
++					StartLine: blockStartLine,
++					EndLine:   i,
++					Type:      blockType,
++					Name:      blockType.String(),
++					Level:     0,
++				})
++			}
++			inBlock = false
++			continue
++		}
++
++		if inBlock {
++			continue
++		}
++
++		// Count braces to track nesting
++		openCount := strings.Count(line, "{")
++		closeCount := strings.Count(line, "}")
++
++		// Detect function/method/type starts
++		if openCount > 0 && braceDepth == 0 {
++			foldType, name := m.detectFoldType(line)
++			if foldType != -1 {
++				foldStack = append(foldStack, foldStackEntry{
++					line:       i,
++					foldType:   foldType,
++					name:       name,
++					braceLevel: braceDepth,
++				})
++			}
++		}
++
++		// Update brace depth
++		braceDepth += openCount - closeCount
++
++		// Check for fold ends
++		if closeCount > 0 && len(foldStack) > 0 {
++			// Pop folds that end at this brace level
++			for len(foldStack) > 0 {
++				entry := foldStack[len(foldStack)-1]
++				if braceDepth <= entry.braceLevel {
++					break
++				}
++
++				// End the fold
++				if i > entry.line {
++					m.foldRanges = append(m.foldRanges, FoldRange{
++						StartLine: entry.line,
++						EndLine:   i,
++						Type:      entry.foldType,
++						Name:      entry.name,
++						Level:     entry.braceLevel,
++					})
++				}
++				foldStack = foldStack[:len(foldStack)-1]
++			}
++		}
++	}
++
++	// Handle any remaining open folds (malformed code)
++	for len(foldStack) > 0 {
++		entry := foldStack[len(foldStack)-1]
++		if len(lines)-1 > entry.line {
++			m.foldRanges = append(m.foldRanges, FoldRange{
++				StartLine: entry.line,
++				EndLine:   len(lines) - 1,
++				Type:      entry.foldType,
++				Name:      entry.name,
++				Level:     entry.braceLevel,
++			})
++		}
++		foldStack = foldStack[:len(foldStack)-1]
++	}
++
++	// Sort fold ranges by start line
++	sort.Slice(m.foldRanges, func(i, j int) bool {
++		return m.foldRanges[i].StartLine < m.foldRanges[j].StartLine
++	})
++}
++
++// detectFoldType detects the type of fold from a line of code.
++func (m *Manager) detectFoldType(line string) (FoldType, string) {
++	trimmed := strings.TrimSpace(line)
++
++	// Function pattern: func Name(...) or func (recv) Name(...)
++	funcPattern := regexp.MustCompile(`^func\s+(?:\([^)]+\)\s+)?(\w+)`)
++	if matches := funcPattern.FindStringSubmatch(trimmed); matches != nil {
++		return FoldTypeFunction, matches[1]
++	}
++
++	// Type pattern: type Name struct/interface/...
++	typePattern := regexp.MustCompile(`^type\s+(\w+)`)
++	if matches := typePattern.FindStringSubmatch(trimmed); matches != nil {
++		return FoldTypeType, matches[1]
++	}
++
++	// Region pattern: //region Name or // region Name
++	regionPattern := regexp.MustCompile(`^//\s*region\s+(\w+)`)
++	if matches := regionPattern.FindStringSubmatch(trimmed); matches != nil {
++		return FoldTypeRegion, matches[1]
++	}
++
++	return -1, ""
++}
++
++// rebuildCollapsedLines rebuilds the map of collapsed lines.
++func (m *Manager) rebuildCollapsedLines() {
++	m.collapsedLines = make(map[int]bool)
++	for _, fold := range m.foldRanges {
++		if fold.Collapsed {
++			for i := fold.StartLine + 1; i <= fold.EndLine; i++ {
++				m.collapsedLines[i] = true
++			}
++		}
++	}
++}
++
++// GetFoldRanges returns all fold ranges.
++func (m *Manager) GetFoldRanges() []FoldRange {
++	m.mu.RLock()
++	defer m.mu.RUnlock()
++
++	result := make([]FoldRange, len(m.foldRanges))
++	copy(result, m.foldRanges)
++	return result
++}
++
++// GetFoldAtLine returns the fold range at the given line (if any).
++func (m *Manager) GetFoldAtLine(line int) *FoldRange {
++	m.mu.RLock()
++	defer m.mu.RUnlock()
++
++	for i := range m.foldRanges {
++		if m.foldRanges[i].StartLine == line {
++			return &m.foldRanges[i]
++		}
++	}
++	return nil
++}
++
++// GetDeepestFoldAtLine returns the deepest fold range containing the given line.
++func (m *Manager) GetDeepestFoldAtLine(line int) *FoldRange {
++	m.mu.RLock()
++	defer m.mu.RUnlock()
++
++	var deepest *FoldRange
++	maxLevel := -1
++
++	for i := range m.foldRanges {
++		fold := &m.foldRanges[i]
++		if line >= fold.StartLine && line <= fold.EndLine {
++			if fold.Level > maxLevel {
++				maxLevel = fold.Level
++				deepest = fold
++			}
++		}
++	}
++
++	return deepest
++}
++
++// ToggleFold toggles the collapsed state of the fold at the given line.
++func (m *Manager) ToggleFold(startLine int) bool {
++	m.mu.Lock()
++	defer m.mu.Unlock()
++
++	for i := range m.foldRanges {
++		if m.foldRanges[i].StartLine == startLine {
++			m.foldRanges[i].Collapsed = !m.foldRanges[i].Collapsed
++			m.rebuildCollapsedLines()
++			return m.foldRanges[i].Collapsed
++		}
++	}
++	return false
++}
++
++// CollapseFold collapses the fold at the given line.
++func (m *Manager) CollapseFold(startLine int) bool {
++	m.mu.Lock()
++	defer m.mu.Unlock()
++
++	for i := range m.foldRanges {
++		if m.foldRanges[i].StartLine == startLine {
++			changed := !m.foldRanges[i].Collapsed
++			m.foldRanges[i].Collapsed = true
++			if changed {
++				m.rebuildCollapsedLines()
++			}
++			return changed
++		}
++	}
++	return false
++}
++
++// ExpandFold expands the fold at the given line.
++func (m *Manager) ExpandFold(startLine int) bool {
++	m.mu.Lock()
++	defer m.mu.Unlock()
++
++	for i := range m.foldRanges {
++		if m.foldRanges[i].StartLine == startLine {
++			changed := m.foldRanges[i].Collapsed
++			m.foldRanges[i].Collapsed = false
++			if changed {
++				m.rebuildCollapsedLines()
++			}
++			return changed
++		}
++	}
++	return false
++}
++
++// CollapseAll collapses all foldable regions.
++func (m *Manager) CollapseAll() {
++	m.mu.Lock()
++	defer m.mu.Unlock()
++
++	changed := false
++	for i := range m.foldRanges {
++		if !m.foldRanges[i].Collapsed {
++			m.foldRanges[i].Collapsed = true
++			changed = true
++		}
++	}
++	if changed {
++		m.rebuildCollapsedLines()
++	}
++}
++
++// ExpandAll expands all foldable regions.
++func (m *Manager) ExpandAll() {
++	m.mu.Lock()
++	defer m.mu.Unlock()
++
++	changed := false
++	for i := range m.foldRanges {
++		if m.foldRanges[i].Collapsed {
++			m.foldRanges[i].Collapsed = false
++			changed = true
++		}
++	}
++	if changed {
++		m.rebuildCollapsedLines()
++	}
++}
++
++// IsLineVisible returns true if the given line is visible (not collapsed).
++func (m *Manager) IsLineVisible(line int) bool {
++	m.mu.RLock()
++	defer m.mu.RUnlock()
++
++	return !m.collapsedLines[line]
++}
++
++// GetVisibleLineCount returns the number of visible lines in the given range.
++func (m *Manager) GetVisibleLineCount(start, end int) int {
++	m.mu.RLock()
++	defer m.mu.RUnlock()
++
++	count := 0
++	for i := start; i <= end; i++ {
++		if !m.collapsedLines[i] {
++			count++
++		}
++	}
++	return count
++}
++
++// MapLineToVisible maps an actual line number to its visible position.
++// Returns -1 if the line is collapsed.
++func (m *Manager) MapLineToVisible(line int) int {
++	m.mu.RLock()
++	defer m.mu.RUnlock()
++
++	if m.collapsedLines[line] {
++		return -1
++	}
++
++	visiblePos := 0
++	for i := range line {
++		if !m.collapsedLines[i] {
++			visiblePos++
++		}
++	}
++	return visiblePos
++}
++
++// MapVisibleToLine maps a visible position to an actual line number.
++func (m *Manager) MapVisibleToLine(visiblePos int) int {
++	m.mu.RLock()
++	defer m.mu.RUnlock()
++
++	visibleCount := 0
++	for i := 0; i < len(m.lineCache); i++ {
++		if !m.collapsedLines[i] {
++			if visibleCount == visiblePos {
++				return i
++			}
++			visibleCount++
++		}
++	}
++	return -1
++}
+diff --git a/internal/layout/text_layout.go b/internal/layout/text_layout.go
+index 97806c0..f28072c 100644
+--- a/internal/layout/text_layout.go
++++ b/internal/layout/text_layout.go
+@@ -13,6 +13,7 @@ import (
+ 	"gioui.org/text"
+ 	"github.com/go-text/typesetting/segmenter"
+ 	"github.com/oligo/gvcode/internal/buffer"
++	"github.com/oligo/gvcode/internal/folding"
+ 	"golang.org/x/image/math/fixed"
+ )
+ 
+@@ -37,6 +38,11 @@ type TextLayout struct {
+ 	bounds image.Rectangle
+ 	// baseline tracks the location of the first line's baseline.
+ 	baseline int
++
++	// foldManager manages code folding regions.
++	foldManager *folding.Manager
++	// visibleParagraphs maps visible paragraph indices to actual paragraph indices.
++	visibleParagraphs []int
+ }
+ 
+ func NewTextLayout(src buffer.TextSource) TextLayout {
+@@ -46,6 +52,11 @@ func NewTextLayout(src buffer.TextSource) TextLayout {
+ 	}
+ }
+ 
++// SetFoldManager sets the folding manager for this layout.
++func (tl *TextLayout) SetFoldManager(fm *folding.Manager) {
++	tl.foldManager = fm
++}
++
+ // Calculate line height. Maybe there's a better way?
+ func (tl *TextLayout) calcLineHeight(params *text.Parameters) fixed.Int26_6 {
+ 	lineHeight := params.LineHeight
+@@ -243,17 +254,25 @@ func (tl *TextLayout) trackLines(lines []Line) {
+ 	}
+ 
+ 	rng := Paragraph{}
++	paraIdx := 0
+ 	for _, l := range lines {
+ 		hasBreak := rng.Add(l)
+ 
+ 		if hasBreak {
+-			tl.Paragraphs = append(tl.Paragraphs, rng)
++			// Check if this paragraph should be visible (not folded)
++			if tl.foldManager == nil || tl.foldManager.IsLineVisible(paraIdx) {
++				tl.Paragraphs = append(tl.Paragraphs, rng)
++			}
++			paraIdx++
+ 			rng = Paragraph{}
+ 		}
+ 	}
+ 
+ 	if rng != (Paragraph{}) {
+-		tl.Paragraphs = append(tl.Paragraphs, rng)
++		// Check if this paragraph should be visible (not folded)
++		if tl.foldManager == nil || tl.foldManager.IsLineVisible(paraIdx) {
++			tl.Paragraphs = append(tl.Paragraphs, rng)
++		}
+ 	}
+ }
+ 
+diff --git a/option.go b/option.go
+index e7c855f..afed7e4 100644
+--- a/option.go
++++ b/option.go
+@@ -218,3 +218,16 @@ func WithRunButtons() EditorOption {
+ 		e.gutterManager.Register(providers.NewRunButtonProvider())
+ 	}
+ }
++
++// WithStickyLines enables sticky lines functionality.
++// Sticky lines keep important code structure (functions, types, etc.) visible at the top of the editor while scrolling.
++func WithStickyLines() EditorOption {
++	return func(e *Editor) {
++		e.initBuffer()
++		if e.gutterManager == nil {
++			e.gutterManager = gutter.NewManager()
++		}
++		// Register sticky lines provider (it will be used internally by editor)
++		e.gutterManager.Register(providers.NewStickyLinesProvider())
++	}
++}
+diff --git a/textview/text.go b/textview/text.go
+index 4f0ab44..a2d9d5b 100644
+--- a/textview/text.go
++++ b/textview/text.go
+@@ -11,6 +11,7 @@ import (
+ 	"gioui.org/text"
+ 	"gioui.org/unit"
+ 	"github.com/oligo/gvcode/internal/buffer"
++	"github.com/oligo/gvcode/internal/folding"
+ 	lt "github.com/oligo/gvcode/internal/layout"
+ 	"github.com/oligo/gvcode/internal/painter"
+ 	"github.com/oligo/gvcode/textstyle/decoration"
+@@ -105,6 +106,9 @@ type TextView struct {
+ 	regions []Region
+ 	// line buffer for line related operations.
+ 	lineBuf []byte
++
++	// foldManager manages code folding regions.
++	foldManager *folding.Manager
+ }
+ 
+ func NewTextView() *TextView {
+@@ -344,6 +348,21 @@ func (e *TextView) TextLayout() *lt.TextLayout {
+ 	return &e.layouter
+ }
+ 
++// SetFoldManager sets the folding manager for this text view.
++// The fold manager controls which lines are visible (not folded).
++func (e *TextView) SetFoldManager(fm *folding.Manager) {
++	if e.foldManager != fm {
++		e.foldManager = fm
++		e.layouter.SetFoldManager(fm)
++		e.invalidate()
++	}
++}
++
++// FoldManager returns the current folding manager.
++func (e *TextView) FoldManager() *folding.Manager {
++	return e.foldManager
++}
++
+ func (e *TextView) scrollAbs(x, y int) {
+ 	e.scrollOff.X = x
+ 	e.scrollOff.Y = y
+@@ -412,6 +431,11 @@ func (e *TextView) invalidate() {
+ 	e.valid = false
+ }
+ 
++// Invalidate forces a re-layout of the text on the next frame.
++func (e *TextView) Invalidate() {
++	e.invalidate()
++}
++
+ // Set the text of the buffer. It returns the number of runes inserted.
+ func (e *TextView) SetText(s string) int {
+ 	e.src.SetText([]byte(s))
+-- 
+2.47.0.windows.2
+

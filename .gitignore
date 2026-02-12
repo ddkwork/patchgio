@@ -1,0 +1,9 @@
+.idea
+gio.tar
+/action_test.go
+*.log
+*.cmd
+*.zip
+/环境变量/
+/go.work.sum
+/go.work

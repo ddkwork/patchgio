@@ -1,0 +1,65 @@
+From 0ebb36f60ac388176c1154ebff1d97f8176110db Mon Sep 17 00:00:00 2001
+From: Admin <2762713521@qq.com>
+Date: Thu, 12 Feb 2026 19:44:12 +0800
+Subject: [PATCH] 
+ refactor__修复example_galaxy编译，使用_r2_包的函数替代向量运算方法
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+---
+ example/galaxy/galaxy.go | 8 ++++----
+ example/galaxy/main.go   | 2 +-
+ 2 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/example/galaxy/galaxy.go b/example/galaxy/galaxy.go
+index 61930a42..84a0d2d3 100644
+--- a/example/galaxy/galaxy.go
++++ b/example/galaxy/galaxy.go
+@@ -23,10 +23,10 @@ func (m *mass) move(f r2.Vec) {
+ 	// F = ma
+ 	f.X /= m.m
+ 	f.Y /= m.m
+-	m.v = m.v.Add(f)
++	m.v = r2.Add(m.v, f)
+ 
+ 	// Update position.
+-	m.d = m.d.Add(m.v)
++	m.d = r2.Add(m.d, m.v)
+ }
+ 
+ func galaxy(numStars int, rnd *rand.Rand) ([]*mass, barneshut.Plane) {
+@@ -42,7 +42,7 @@ func galaxy(numStars int, rnd *rand.Rand) ([]*mass, barneshut.Plane) {
+ 			m: rnd.Float64(),
+ 		}
+ 		// Aim at the ground and miss.
+-		s.d = s.d.Scale(-1).Add(r2.Vec{
++		s.d = r2.Add(r2.Scale(-1, s.d), r2.Vec{
+ 			X: 10 * rnd.NormFloat64(),
+ 			Y: 10 * rnd.NormFloat64(),
+ 		})
+@@ -73,7 +73,7 @@ func simulate(stars []*mass, plane barneshut.Plane, dist *distribution) {
+ 	// and an imaginary gravitational constant.
+ 	const G = 10
+ 	for j, s := range stars {
+-		vectors[j] = plane.ForceOn(s, theta, barneshut.Gravity2).Scale(G)
++		vectors[j] = r2.Scale(G, plane.ForceOn(s, theta, barneshut.Gravity2))
+ 	}
+ 
+ 	// Update positions.
+diff --git a/example/galaxy/main.go b/example/galaxy/main.go
+index 0e1b50ef..a5890b27 100644
+--- a/example/galaxy/main.go
++++ b/example/galaxy/main.go
+@@ -88,7 +88,7 @@ func (d *distribution) Update(stars []*mass) {
+ // distortion during the visualization, though it does not stop it
+ // completely.
+ func (d *distribution) EnsureSquare() {
+-	diff := d.max.Sub(d.min)
++	diff := r2.Sub(d.max, d.min)
+ 	if diff.X > diff.Y {
+ 		padding := (diff.X - diff.Y) / 2
+ 		d.max.Y += padding
+-- 
+2.47.0.windows.2
+

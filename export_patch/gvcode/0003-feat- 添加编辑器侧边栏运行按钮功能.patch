@@ -1,0 +1,539 @@
+From 837869d7cd4208a515e2d1423b78990f30742226 Mon Sep 17 00:00:00 2001
+From: ddkwork <2762713521@qq.com>
+Date: Wed, 11 Feb 2026 13:54:42 +0800
+Subject: [PATCH] feat: 添加编辑器侧边栏运行按钮功能
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ gutter.go                      |  44 +++++
+ gutter/gutter.go               |  37 ++++
+ gutter/manager.go              |  20 +++
+ gutter/providers/linenumber.go |   5 +-
+ gutter/providers/runbutton.go  | 304 +++++++++++++++++++++++++++++++++
+ option.go                      |  11 ++
+ 6 files changed, 417 insertions(+), 4 deletions(-)
+ create mode 100644 gutter/providers/runbutton.go
+
+diff --git a/gutter.go b/gutter.go
+index 1a6d8b2..44ea923 100644
+--- a/gutter.go
++++ b/gutter.go
+@@ -51,6 +51,9 @@ func (e *Editor) buildGutterContext(gtx layout.Context, shaper *text.Shaper) gut
+ 		currentLine, _ = e.text.CaretPos()
+ 	}
+ 
++	// Feed line contents to run button provider if it exists
++	e.feedLineContentsToRunButtonProvider(paragraphs)
++
+ 	return gutter.GutterContext{
+ 		Shaper:      shaper,
+ 		TextParams:  e.text.Params(),
+@@ -62,6 +65,47 @@ func (e *Editor) buildGutterContext(gtx layout.Context, shaper *text.Shaper) gut
+ 	}
+ }
+ 
++// feedLineContentsToRunButtonProvider reads line contents and feeds them to the run button provider.
++func (e *Editor) feedLineContentsToRunButtonProvider(paragraphs []gutter.Paragraph) {
++	// Find the run button provider
++	var runButtonProvider gutter.LineContentProvider
++
++	for _, p := range e.gutterManager.Providers() {
++		if p.ID() == "runbutton" {
++			if rb, ok := p.(gutter.LineContentProvider); ok {
++				runButtonProvider = rb
++				break
++			}
++		}
++	}
++
++	if runButtonProvider == nil {
++		return
++	}
++
++	// Read line contents for all visible paragraphs
++	lines := make([]string, 0, len(paragraphs))
++	for _, para := range paragraphs {
++		// Read line content from buffer
++		startOff := e.buffer.RuneOffset(para.RuneOff)
++		endOff := e.buffer.RuneOffset(para.RuneOff + para.Runes)
++
++		if cap(e.scratch) < endOff-startOff {
++			e.scratch = make([]byte, endOff-startOff)
++		}
++		e.scratch = e.scratch[:endOff-startOff]
++		n, _ := e.buffer.ReadAt(e.scratch, int64(startOff))
++
++		lines = append(lines, string(e.scratch[:n]))
++	}
++
++	// Feed to provider with starting line number
++	if len(paragraphs) > 0 {
++		startLine := paragraphs[0].Index
++		runButtonProvider.SetLineContents(lines, startLine)
++	}
++}
++
+ // gutterColors returns the GutterColors based on the color palette.
+ func (e *Editor) gutterColors() *gutter.GutterColors {
+ 	if e.colorPalette == nil {
+diff --git a/gutter/gutter.go b/gutter/gutter.go
+index f26c714..5a03ae8 100644
+--- a/gutter/gutter.go
++++ b/gutter/gutter.go
+@@ -10,6 +10,11 @@ import (
+ 	"golang.org/x/image/math/fixed"
+ )
+ 
++const (
++	// LineNumberProviderID is the unique identifier for the line number provider.
++	LineNumberProviderID = "linenumber"
++)
++
+ // GutterProvider defines the interface for components that render content
+ // in the gutter area of the editor. Providers are rendered left-to-right
+ // sorted by their priority (lower priority = closer to text).
+@@ -30,6 +35,15 @@ type GutterProvider interface {
+ 	Layout(gtx layout.Context, ctx GutterContext) layout.Dimensions
+ }
+ 
++// LineContentProvider is an optional interface that GutterProviders can implement
++// to receive the contents of visible lines for analysis.
++type LineContentProvider interface {
++	GutterProvider
++	// SetLineContents sets the contents of all visible lines for analysis.
++	// The startLine parameter indicates the absolute line number of the first line in the slice.
++	SetLineContents(lines []string, startLine int)
++}
++
+ // GutterContext provides the context needed for gutter providers to render
+ // their content. It includes information about the visible area, line metadata,
+ // and colors.
+@@ -55,6 +69,10 @@ type GutterContext struct {
+ 
+ 	// Colors provides the color scheme for gutter rendering.
+ 	Colors *GutterColors
++
++	// LineNumberWidth is the width of the line number column in pixels.
++	// This is set by the gutter manager when a line number provider is present.
++	LineNumberWidth int
+ }
+ 
+ // Paragraph contains metadata about a paragraph (logical line) in the document.
+@@ -116,3 +134,22 @@ type LineHighlight struct {
+ 	// Color is the background color for the highlight.
+ 	Color gvcolor.Color
+ }
++
++// RunButtonEvent represents a click event on a run button in the gutter.
++type RunButtonEvent struct {
++	// ButtonType is the type of button that was clicked.
++	ButtonType int
++
++	// Line is the 0-based line number where the button was clicked.
++	Line int
++
++	// ButtonText is the text content of the line containing the button.
++	ButtonText string
++}
++
++// RunButtonType constants
++const (
++	RunButtonNone = iota
++	RunButtonMain
++	RunButtonTest
++)
+diff --git a/gutter/manager.go b/gutter/manager.go
+index 8730b93..496989a 100644
+--- a/gutter/manager.go
++++ b/gutter/manager.go
+@@ -115,6 +115,21 @@ func (m *Manager) CollectHighlights() []LineHighlight {
+ 	return highlights
+ }
+ 
++// CollectRunButtonEvents collects run button events from all providers that have them.
++func (m *Manager) CollectRunButtonEvents() []RunButtonEvent {
++	var events []RunButtonEvent
++	for _, p := range m.providers {
++		// Check if provider has GetPendingEvents method
++		type eventCollector interface {
++			GetPendingEvents() []RunButtonEvent
++		}
++		if collector, ok := p.(eventCollector); ok {
++			events = append(events, collector.GetPendingEvents()...)
++		}
++	}
++	return events
++}
++
+ // TotalWidth returns the total width of all gutter columns including gaps.
+ func (m *Manager) TotalWidth() int {
+ 	return m.totalWidth
+@@ -300,6 +315,11 @@ func (m *Manager) Layout(gtx layout.Context, ctx GutterContext) layout.Dimension
+ 
+ 	m.totalWidth = totalWidth
+ 
++	// Find line number provider width and set it in context for other providers
++	if lineNumberProvider := m.GetProvider(LineNumberProviderID); lineNumberProvider != nil {
++		ctx.LineNumberWidth = m.providerWidths[LineNumberProviderID]
++	}
++
+ 	// Set up the clip area and register for events
+ 	area := clip.Rect(image.Rectangle{Max: image.Point{X: totalWidth, Y: gtx.Constraints.Max.Y}})
+ 	stack := area.Push(gtx.Ops)
+diff --git a/gutter/providers/linenumber.go b/gutter/providers/linenumber.go
+index 30e3f83..09369bd 100644
+--- a/gutter/providers/linenumber.go
++++ b/gutter/providers/linenumber.go
+@@ -17,9 +17,6 @@ import (
+ )
+ 
+ const (
+-	// LineNumberProviderID is the unique identifier for the line number provider.
+-	LineNumberProviderID = "linenumber"
+-
+ 	// defaultMinDigits is the minimum number of digits to reserve space for.
+ 	defaultMinDigits = 4
+ )
+@@ -66,7 +63,7 @@ func NewLineNumberProviderWithMinDigits(minDigits int) *LineNumberProvider {
+ 
+ // ID returns the unique identifier for this provider.
+ func (p *LineNumberProvider) ID() string {
+-	return LineNumberProviderID
++	return gutter.LineNumberProviderID
+ }
+ 
+ // Priority returns the rendering priority. Line numbers have a high priority (100)
+diff --git a/gutter/providers/runbutton.go b/gutter/providers/runbutton.go
+new file mode 100644
+index 0000000..d1942ef
+--- /dev/null
++++ b/gutter/providers/runbutton.go
+@@ -0,0 +1,304 @@
++package providers
++
++import (
++	"image"
++	"image/color"
++	"regexp"
++
++	"gioui.org/f32"
++	"gioui.org/gesture"
++	"gioui.org/io/key"
++	"gioui.org/io/pointer"
++	"gioui.org/layout"
++	"gioui.org/op"
++	"gioui.org/op/clip"
++	"gioui.org/op/paint"
++	"gioui.org/text"
++	"gioui.org/unit"
++	gvcolor "github.com/oligo/gvcode/color"
++	"github.com/oligo/gvcode/gutter"
++)
++
++const (
++	// RunButtonProviderID is the unique identifier for the run button provider.
++	RunButtonProviderID = "runbutton"
++
++	// buttonSize is the size of the run button in dp units.
++	buttonSize = 24
++)
++
++// RunButtonType represents the type of run button.
++type RunButtonType int
++
++const (
++	// RunButtonNone indicates no run button should be shown.
++	RunButtonNone RunButtonType = iota
++	// RunButtonMain indicates a main function run button.
++	RunButtonMain
++	// RunButtonTest indicates a test function run button.
++	RunButtonTest
++)
++
++// RunButtonProvider renders run buttons for main and test functions in the gutter.
++type RunButtonProvider struct {
++	// clicker handles click events on buttons.
++	clicker gesture.Click
++
++	// pending holds run events that haven't been consumed yet.
++	pending []RunButtonEvent
++
++	// paragraphs caches the visible paragraphs from the last Layout call.
++	paragraphs []gutter.Paragraph
++
++	// buttonTypes caches the button type for each line.
++	buttonTypes map[int]RunButtonType
++
++	// buttonTexts caches button labels for each line.
++	buttonTexts map[int]string
++
++	// lineHeight caches the line height from the last Layout call.
++	lineHeight int
++
++	// viewport caches the viewport from the last Layout call.
++	viewport image.Rectangle
++}
++
++// NewRunButtonProvider creates a new run button provider with default settings.
++func NewRunButtonProvider() *RunButtonProvider {
++	return &RunButtonProvider{
++		buttonTypes: make(map[int]RunButtonType),
++		buttonTexts: make(map[int]string),
++		paragraphs:  make([]gutter.Paragraph, 0),
++	}
++}
++
++// ID returns the unique identifier for this provider.
++func (p *RunButtonProvider) ID() string {
++	return RunButtonProviderID
++}
++
++// Priority returns the rendering priority. Run buttons have priority 150
++// meaning they are rendered between line numbers (100) and text (200+).
++func (p *RunButtonProvider) Priority() int {
++	return 150
++}
++
++// Width returns the fixed width needed for run buttons.
++func (p *RunButtonProvider) Width(gtx layout.Context, shaper *text.Shaper, params text.Parameters, lineCount int) unit.Dp {
++	return unit.Dp(buttonSize)
++}
++
++// SetLineContents sets the contents of all visible lines for analysis.
++// This should be called before Layout.
++func (p *RunButtonProvider) SetLineContents(lines []string, startLine int) {
++	p.analyzeLines(lines, startLine)
++}
++
++// Layout renders run buttons for visible paragraphs.
++func (p *RunButtonProvider) Layout(gtx layout.Context, ctx gutter.GutterContext) layout.Dimensions {
++	// Cache context info for event handling
++	p.paragraphs = ctx.Paragraphs
++	p.lineHeight = ctx.LineHeight.Ceil()
++	p.viewport = ctx.Viewport
++
++	// Define colors for different button types
++	mainColor := gvcolor.MakeColor(color.NRGBA{R: 0x4C, G: 0xAF, B: 0x50, A: 0xFF}) // Green
++	testColor := gvcolor.MakeColor(color.NRGBA{R: 0x21, G: 0x96, B: 0xF3, A: 0xFF}) // Blue
++
++	if ctx.Colors != nil && ctx.Colors.Custom != nil {
++		if c, ok := ctx.Colors.Custom["runbutton.main"]; ok {
++			mainColor = c
++		}
++		if c, ok := ctx.Colors.Custom["runbutton.test"]; ok {
++			testColor = c
++		}
++	}
++
++	// Render buttons for each visible paragraph
++	buttonSizePx := gtx.Dp(unit.Dp(buttonSize))
++
++	for _, para := range ctx.Paragraphs {
++		// Skip paragraphs outside the viewport
++		if para.EndY < ctx.Viewport.Min.Y {
++			continue
++		}
++		if para.StartY > ctx.Viewport.Max.Y {
++			break
++		}
++
++		btnType, hasButton := p.buttonTypes[para.Index]
++		if !hasButton || btnType == RunButtonNone {
++			continue
++		}
++
++		// Calculate button position (to the right of line numbers)
++		// The button should align with the line's baseline, not center
++		buttonY := para.StartY - ctx.Viewport.Min.Y
++		// Position button to the right of line numbers with a small gap
++		gapPx := 4 // Small gap between line numbers and run button
++		xPos := ctx.LineNumberWidth + gapPx
++
++		// Calculate triangle size and position
++		triangleSize := float32(buttonSizePx) * 0.5 // Make triangle smaller
++		centerX := float32(xPos) + float32(buttonSizePx)/2
++		centerY := float32(buttonY)
++
++		// Register click handler using clip (use full button area for easier clicking)
++		pointer.CursorPointer.Add(gtx.Ops)
++		clip.Rect(image.Rect(xPos, buttonY, xPos+buttonSizePx, buttonY+p.lineHeight)).Push(gtx.Ops).Pop()
++		p.clicker.Add(gtx.Ops)
++
++		// Choose color based on button type
++		var btnColor gvcolor.Color
++		if btnType == RunButtonMain {
++			btnColor = mainColor
++		} else if btnType == RunButtonTest {
++			btnColor = testColor
++		}
++
++		// Draw triangle (play button)
++		m := op.Record(gtx.Ops)
++		btnColor.Op(gtx.Ops).Add(gtx.Ops)
++
++		// Create triangle path (equilateral triangle pointing right)
++		// Position triangle centered vertically on the line
++		var path clip.Path
++		path.Begin(gtx.Ops)
++		// Move to left vertex
++		path.MoveTo(f32.Pt(centerX-triangleSize/2, centerY-triangleSize/2))
++		// Line to right vertex
++		path.LineTo(f32.Pt(centerX+triangleSize/2, centerY))
++		// Line to bottom vertex
++		path.LineTo(f32.Pt(centerX-triangleSize/2, centerY+triangleSize/2))
++		// Close path
++		path.Close()
++
++		// Fill the triangle
++		outline := clip.Outline{Path: path.End()}
++		stack := outline.Op().Push(gtx.Ops)
++		paint.PaintOp{}.Add(gtx.Ops)
++		stack.Pop()
++
++		m.Stop().Add(gtx.Ops)
++	}
++
++	return layout.Dimensions{Size: image.Pt(buttonSizePx, 0)}
++}
++
++// HandleClick implements the InteractiveGutter interface.
++func (p *RunButtonProvider) HandleClick(line int, source pointer.Source, numClicks int, modifiers key.Modifiers) bool {
++	btnType, hasButton := p.buttonTypes[line]
++	if !hasButton || btnType == RunButtonNone {
++		return false
++	}
++
++	// Generate run button event
++	p.pending = append(p.pending, RunButtonEvent{
++		ButtonType: btnType,
++		Line:       line,
++		ButtonText: p.buttonTexts[line],
++	})
++
++	return true
++}
++
++// HandleHover implements the InteractiveGutter interface.
++func (p *RunButtonProvider) HandleHover(line int) *gutter.HoverInfo {
++	btnType, hasButton := p.buttonTypes[line]
++	if !hasButton || btnType == RunButtonNone {
++		return nil
++	}
++
++	var text string
++	if btnType == RunButtonMain {
++		text = "Run main function"
++	} else if btnType == RunButtonTest {
++		text = "Run test function"
++	}
++
++	return &gutter.HoverInfo{
++		Text: text,
++	}
++}
++
++// analyzeLines analyzes line contents to determine if they should have run buttons.
++func (p *RunButtonProvider) analyzeLines(lines []string, startLine int) {
++	// Patterns for detecting main and test functions
++	mainPattern := regexp.MustCompile(`^func\s+main\s*\(`)
++	testPattern := regexp.MustCompile(`^func\s+Test\w+\s*\(`)
++	benchmarkPattern := regexp.MustCompile(`^func\s+Benchmark\w+\s*\(`)
++
++	// Clear previous button types
++	p.buttonTypes = make(map[int]RunButtonType)
++	p.buttonTexts = make(map[int]string)
++
++	for i, line := range lines {
++		line = trimLine(line)
++		absoluteLine := startLine + i
++
++		// Check for main function
++		if mainPattern.MatchString(line) {
++			p.buttonTypes[absoluteLine] = RunButtonMain
++			p.buttonTexts[absoluteLine] = line
++			continue
++		}
++
++		// Check for test function
++		if testPattern.MatchString(line) {
++			p.buttonTypes[absoluteLine] = RunButtonTest
++			p.buttonTexts[absoluteLine] = line
++			continue
++		}
++
++		// Check for benchmark function
++		if benchmarkPattern.MatchString(line) {
++			p.buttonTypes[absoluteLine] = RunButtonTest
++			p.buttonTexts[absoluteLine] = line
++		}
++	}
++}
++
++// trimLine removes leading/trailing whitespace and comments from a line.
++func trimLine(line string) string {
++	// Remove comments
++	for i := 0; i < len(line); i++ {
++		if line[i] == '/' && i+1 < len(line) && line[i+1] == '/' {
++			line = line[:i]
++			break
++		}
++	}
++	return trimSpace(line)
++}
++
++// trimSpace trims whitespace from a string.
++func trimSpace(s string) string {
++	// Simple implementation, can be optimized
++	start := 0
++	for start < len(s) && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r') {
++		start++
++	}
++	end := len(s)
++	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n' || s[end-1] == '\r') {
++		end--
++	}
++	return s[start:end]
++}
++
++// GetPendingEvents returns pending run button events and clears the pending list.
++func (p *RunButtonProvider) GetPendingEvents() []RunButtonEvent {
++	events := p.pending
++	p.pending = p.pending[:0]
++	return events
++}
++
++// RunButtonEvent represents a click event on a run button.
++type RunButtonEvent struct {
++	// ButtonType is the type of button that was clicked.
++	ButtonType RunButtonType
++
++	// Line is the 0-based line number where the button was clicked.
++	Line int
++
++	// ButtonText is the text content of the line containing the button.
++	ButtonText string
++}
+diff --git a/option.go b/option.go
+index 4061a7c..e7c855f 100644
+--- a/option.go
++++ b/option.go
+@@ -207,3 +207,14 @@ func WithDefaultGutters() EditorOption {
+ 		e.gutterManager.Register(providers.NewLineNumberProvider())
+ 	}
+ }
++
++// WithRunButtons enables run buttons for main and test functions in the gutter.
++func WithRunButtons() EditorOption {
++	return func(e *Editor) {
++		e.initBuffer()
++		if e.gutterManager == nil {
++			e.gutterManager = gutter.NewManager()
++		}
++		e.gutterManager.Register(providers.NewRunButtonProvider())
++	}
++}
+-- 
+2.47.0.windows.2
+

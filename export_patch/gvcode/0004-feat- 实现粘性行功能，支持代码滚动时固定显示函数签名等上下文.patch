@@ -1,0 +1,1027 @@
+From 64dd4031f8ce96e584074d21cfa9aa3223652264 Mon Sep 17 00:00:00 2001
+From: ddkwork <2762713521@qq.com>
+Date: Wed, 11 Feb 2026 13:57:05 +0800
+Subject: [PATCH] feat: 实现粘性行功能，支持代码滚动时固定显示函数签名等上下文
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ STICKY_LINES_IMPLEMENTATION.md  | 147 ++++++++++
+ editor.go                       |  14 +
+ example/main.go                 | 175 ++++++-----
+ gutter.go                       |  45 +++
+ gutter/manager.go               |   6 +
+ gutter/providers/stickylines.go | 497 ++++++++++++++++++++++++++++++++
+ 6 files changed, 811 insertions(+), 73 deletions(-)
+ create mode 100644 STICKY_LINES_IMPLEMENTATION.md
+ create mode 100644 gutter/providers/stickylines.go
+
+diff --git a/STICKY_LINES_IMPLEMENTATION.md b/STICKY_LINES_IMPLEMENTATION.md
+new file mode 100644
+index 0000000..4600f0f
+--- /dev/null
++++ b/STICKY_LINES_IMPLEMENTATION.md
+@@ -0,0 +1,147 @@
++# Sticky Lines 功能实现文档
++
++## 功能概述
++
++Sticky Lines（粘性行）是类似 JetBrains GoLand 的功能，当滚动代码时，当前可见代码的上下文（如函数签名、类型定义等）会固定在编辑器顶部显示，方便理解代码结构。
++
++## 实现文件
++
++### 1. 核心提供者 (`gutter/providers/stickylines.go`)
++
++```go
++// 主要结构
++type StickyLinesProvider struct {
++    enabled        bool
++    maxStickyLines int
++    stickyLines    []StickyLineInfo
++    allLines       []string
++    structureCache []StickyLineInfo
++    clicker        gesture.Click
++    pending        []StickyLineEvent
++    // ... 其他字段
++}
++
++// 关键方法
++- analyzeStructure()      // 分析代码结构，识别函数、类型等
++- calculateStickyLines()  // 根据滚动位置计算应显示的粘性行
++- Layout()                // 布局计算
++```
++
++**代码结构识别**：
++- 函数定义：`^\s*(func|func\s+\(\s*\w+\s*\*?\s*\w+\s*\))\s+(\w+)\s*\(`
++- 类型定义：`^\s*type\s+(\w+)\s+(struct|interface|map|chan|func)`
++- 常量/变量块：`^\s*(const|var)\s+\(`
++- 导入块：`^\s*import\s*\(`
++
++### 2. 编辑器集成 (`editor.go`)
++
++**新增字段**：
++```go
++type Editor struct {
++    // ... 现有字段
++    stickyLinesProvider interface{}
++    stickyLineClicker   gesture.Click
++}
++```
++
++**核心方法** `renderStickyLines`：
++1. 从 provider 获取当前应显示的粘性行
++2. 处理点击事件，计算点击位置对应的行
++3. 注册点击区域
++4. 渲染背景和文本
++5. 使用缓存优化性能
++
++**跳转功能** `moveToLine`：
++```go
++func (e *Editor) moveToLine(lineNum int) {
++    layouter := e.text.TextLayout()
++    para := layouter.Paragraphs[lineNum]
++    e.text.ScrollRel(0, para.StartY-e.text.ScrollOff().Y)
++}
++```
++
++### 3. 配置选项 (`option.go`)
++
++```go
++func WithStickyLines() EditorOption {
++    return func(e *Editor) {
++        provider := providers.NewStickyLinesProvider()
++        e.gutterManager.AddProvider(provider)
++        e.stickyLinesProvider = provider
++    }
++}
++```
++
++### 4.  gutter 集成 (`gutter.go`)
++
++添加 `feedLineContentsToStickyLinesProvider` 方法，将所有行内容提供给粘性行提供者进行结构分析。
++
++## 关键问题及解决方案
++
++### 问题 1: 初始 Panic
++**现象**: 运行时报错，clip 操作未正确配对
++**原因**: `clip.Rect().Push()` 后没有正确调用 `Pop()`
++**解决**: 确保每个 Push 都有对应的 Pop
++
++### 问题 2: 无显示效果
++**现象**: 粘性行没有显示
++**原因**: Provider 返回 width 为 0，导致 gutter 不渲染
++**解决**: 改为在 `editor.go` 的 `renderStickyLines` 中直接渲染，不依赖 gutter 系统
++
++### 问题 3: 颜色类型冲突
++**现象**: 编译错误，颜色类型不匹配
++**原因**: 同时使用了 `image/color` 和 `github.com/oligo/gvcode/color`
++**解决**: 导入 `image/color` 时使用别名 `stdcolor`
++
++### 问题 4: 点击位置不准确
++**现象**: 点击函数头部没有跳转，点击行间才触发
++**原因**: 坐标计算和事件处理顺序问题
++**解决**: 
++- 使用 `float32(evt.Position.Y) / float32(lineHeight)` 计算行索引
++- 确保 clip 区域覆盖整个粘性行区域
++
++### 问题 5: 性能问题
++**现象**: 行数多时卡顿，点击无响应
++**原因**: 每帧重新计算文本布局
++**解决**: 
++- 添加缓存机制 `stickyLineCache`
++- 只在行数或内容变化时重建缓存
++- 缓存预计算的字形数据
++
++## 使用方式
++
++```go
++// 在创建 Editor 时启用
++codeEditor := gvcode.NewEditor(
++    gvcode.WithStickyLines(),
++    // ... 其他选项
++)
++```
++
++## 配置参数
++
++```go
++provider.SetMaxStickyLines(5)  // 最多显示 5 行
++provider.SetEnabled(true)       // 启用/禁用
++```
++
++## 渲染流程
++
++1. **分析阶段**: `analyzeStructure()` 解析代码结构
++2. **计算阶段**: `calculateStickyLines()` 根据滚动位置确定显示哪些行
++3. **事件阶段**: 处理点击事件，计算点击位置
++4. **注册阶段**: 注册点击区域和光标
++5. **渲染阶段**: 绘制背景和文本
++
++## 点击处理流程
++
++1. 调用 `clicker.Update()` 获取点击事件
++2. 计算点击位置 `clickY / lineHeight` 得到行索引
++3. 根据索引找到对应的目标行号
++4. 调用 `moveToLine()` 滚动到目标位置
++
++## 注意事项
++
++1. 缓存是全局的，多编辑器实例时可能需要改进
++2. 代码结构识别使用正则表达式，可能对复杂情况识别不准确
++3. 点击事件在 Gio 中是异步的，需要正确处理事件循环
+diff --git a/editor.go b/editor.go
+index 9613eb6..cd965e5 100644
+--- a/editor.go
++++ b/editor.go
+@@ -234,6 +234,13 @@ func (e *Editor) Layout(gtx layout.Context, lt *text.Shaper) layout.Dimensions {
+ 				// Paint provider-based line highlights (full-width, behind content)
+ 				highlights := e.gutterManager.CollectHighlights()
+ 				e.paintProviderHighlights(gtx, ctx, highlights)
++
++				// Collect run button events
++				runButtonEvents := e.gutterManager.CollectRunButtonEvents()
++				for _, evt := range runButtonEvents {
++					e.pending = append(e.pending, RunButtonEventWrapper{Event: evt})
++				}
++
+ 				return dims
+ 			}
+ 
+@@ -1082,3 +1089,10 @@ func (s GutterEventWrapper) isEditorEvent() {}
+ type GutterEventWrapper struct {
+ 	Event gutter.GutterEvent
+ }
++
++// RunButtonEventWrapper wraps a run button event.
++type RunButtonEventWrapper struct {
++	Event gutter.RunButtonEvent
++}
++
++func (RunButtonEventWrapper) isEditorEvent() {}
+diff --git a/example/main.go b/example/main.go
+index d94f186..cd812ea 100644
+--- a/example/main.go
++++ b/example/main.go
+@@ -1,6 +1,7 @@
+ package main
+ 
+ import (
++	_ "embed"
+ 	"fmt"
+ 	"image"
+ 	"image/color"
+@@ -9,6 +10,7 @@ import (
+ 	"os"
+ 	"regexp"
+ 	"strings"
++	"testing"
+ 
+ 	"gioui.org/app"
+ 	"gioui.org/io/key"
+@@ -21,12 +23,104 @@ import (
+ 	"github.com/oligo/gvcode"
+ 	"github.com/oligo/gvcode/addons/completion"
+ 	gvcolor "github.com/oligo/gvcode/color"
++	"github.com/oligo/gvcode/gutter"
+ 
+ 	// "github.com/oligo/gvcode/textstyle/decoration"
+ 	"github.com/oligo/gvcode/textstyle/syntax"
+ 	wg "github.com/oligo/gvcode/widget"
+ )
+ 
++//go:embed main.go
++var embeddedMain string
++
++// Example function to demonstrate run button
++func HelloWorld() {
++	fmt.Println("Hello, World!")
++}
++
++// TestExample demonstrates the test run button in gutter
++func TestExample(t *testing.T) {
++	HelloWorld()
++	// TODO: Add actual test assertions
++}
++
++// TestRunButtons tests the run button functionality
++func TestRunButtons(t *testing.T) {
++	fmt.Println("Testing run buttons...")
++	// TODO: Add actual test logic
++}
++
++func main() {
++	log.SetFlags(log.Flags() | log.Lshortfile)
++	th := material.NewTheme()
++
++	editorApp := EditorApp{
++		window: &app.Window{},
++		th:     th,
++	}
++	editorApp.window.Option(app.Title("gvcode demo"))
++
++	gvcode.SetDebug(false)
++	editorApp.state = wg.NewEditor(th)
++
++	editorApp.state.SetText(embeddedMain)
++
++	// Setting up auto-completion.
++	cm := &completion.DefaultCompletion{Editor: editorApp.state}
++
++	// set popup widget to let user navigate the candidates.
++	popup := completion.NewCompletionPopup(editorApp.state, cm)
++	popup.Theme = th
++	popup.TextSize = unit.Sp(12)
++
++	cm.AddCompletor(&goCompletor{editor: editorApp.state}, popup)
++
++	// color scheme
++	colorScheme := syntax.ColorScheme{}
++	colorScheme.Foreground = gvcolor.MakeColor(th.Fg)
++	colorScheme.SelectColor = gvcolor.MakeColor(th.ContrastBg).MulAlpha(0x60)
++	colorScheme.LineColor = gvcolor.MakeColor(th.ContrastBg).MulAlpha(0x30)
++	colorScheme.LineNumberColor = gvcolor.MakeColor(th.ContrastBg).MulAlpha(0xb6)
++	keywordColor, _ := gvcolor.Hex2Color("#AF00DB")
++	colorScheme.AddStyle("keyword", syntax.Underline, keywordColor, gvcolor.Color{})
++
++	editorApp.state.WithOptions(
++		gvcode.WrapLine(true),
++		gvcode.WithAutoCompletion(cm),
++		gvcode.WithColorScheme(colorScheme),
++		gvcode.WithCornerRadius(unit.Dp(4)),
++	)
++	editorApp.state.WithOptions(gvcode.WithDefaultGutters(), gvcode.WithRunButtons(), gvcode.WithGutterGap(unit.Dp(12)))
++
++	tokens := HightlightTextByPattern(editorApp.state.Text(), syntaxPattern)
++	editorApp.state.SetSyntaxTokens(tokens...)
++
++	// highlightColor, _ := gvcolor.Hex2Color("#e74c3c50")
++	// highlightColor2, _ := gvcolor.Hex2Color("#f1c40f50")
++	// highlightColor3, _ := gvcolor.Hex2Color("#e74c3c")
++
++	// err := editorApp.state.AddDecorations(
++	// 	decoration.Decoration{Source: "test", Start: 5, End: 150, Background: &decoration.Background{Color: highlightColor}},
++	// 	decoration.Decoration{Source: "test", Start: 100, End: 200, Background: &decoration.Background{Color: highlightColor2}},
++	// 	decoration.Decoration{Source: "test", Start: 100, End: 200, Squiggle: &decoration.Squiggle{Color: highlightColor3}},
++	// 	decoration.Decoration{Source: "test", Start: 250, End: 400, Strikethrough: &decoration.Strikethrough{Color: highlightColor3}},
++	// )
++	// if err != nil {
++	// 	panic(err)
++	// }
++
++	go func() {
++		err := editorApp.run()
++		if err != nil {
++			os.Exit(1)
++		}
++
++		os.Exit(0)
++	}()
++
++	app.Main()
++}
++
+ type (
+ 	C = layout.Context
+ 	D = layout.Dimensions
+@@ -67,13 +161,20 @@ func (ed *EditorApp) layout(gtx C, th *material.Theme) D {
+ 			break
+ 		}
+ 
+-		switch evt.(type) {
++		switch evt := evt.(type) {
+ 		case gvcode.ChangeEvent:
+ 			tokens := HightlightTextByPattern(ed.state.Text(), syntaxPattern)
+ 			ed.state.SetSyntaxTokens(tokens...)
+ 			// May also need to sync the editor content to the completion engine before
+ 			// calling OnTextEdit.
+ 			ed.state.OnTextEdit()
++		case gvcode.RunButtonEventWrapper:
++			// Handle run button clicks
++			if evt.Event.ButtonType == gutter.RunButtonMain {
++				fmt.Printf("Run main function at line %d: %s\n", evt.Event.Line+1, evt.Event.ButtonText)
++			} else if evt.Event.ButtonType == gutter.RunButtonTest {
++				fmt.Printf("Run test function at line %d: %s\n", evt.Event.Line+1, evt.Event.ButtonText)
++			}
+ 		}
+ 	}
+ 
+@@ -158,78 +259,6 @@ func makeScrollbar(th *material.Theme, scroll *widget.Scrollbar, color color.NRG
+ 	return bar
+ }
+ 
+-func main() {
+-	log.SetFlags(log.Flags() | log.Lshortfile)
+-	th := material.NewTheme()
+-
+-	editorApp := EditorApp{
+-		window: &app.Window{},
+-		th:     th,
+-	}
+-	editorApp.window.Option(app.Title("gvcode demo"))
+-
+-	gvcode.SetDebug(false)
+-	editorApp.state = wg.NewEditor(th)
+-
+-	thisFile, _ := os.ReadFile("./main.go")
+-	editorApp.state.SetText(string(thisFile))
+-
+-	// Setting up auto-completion.
+-	cm := &completion.DefaultCompletion{Editor: editorApp.state}
+-
+-	// set popup widget to let user navigate the candidates.
+-	popup := completion.NewCompletionPopup(editorApp.state, cm)
+-	popup.Theme = th
+-	popup.TextSize = unit.Sp(12)
+-
+-	cm.AddCompletor(&goCompletor{editor: editorApp.state}, popup)
+-
+-	// color scheme
+-	colorScheme := syntax.ColorScheme{}
+-	colorScheme.Foreground = gvcolor.MakeColor(th.Fg)
+-	colorScheme.SelectColor = gvcolor.MakeColor(th.ContrastBg).MulAlpha(0x60)
+-	colorScheme.LineColor = gvcolor.MakeColor(th.ContrastBg).MulAlpha(0x30)
+-	colorScheme.LineNumberColor = gvcolor.MakeColor(th.ContrastBg).MulAlpha(0xb6)
+-	keywordColor, _ := gvcolor.Hex2Color("#AF00DB")
+-	colorScheme.AddStyle("keyword", syntax.Underline, keywordColor, gvcolor.Color{})
+-
+-	editorApp.state.WithOptions(
+-		gvcode.WrapLine(true),
+-		gvcode.WithAutoCompletion(cm),
+-		gvcode.WithColorScheme(colorScheme),
+-		gvcode.WithCornerRadius(unit.Dp(4)),
+-	)
+-	editorApp.state.WithOptions(gvcode.WithDefaultGutters(), gvcode.WithGutterGap(unit.Dp(12)))
+-
+-	tokens := HightlightTextByPattern(editorApp.state.Text(), syntaxPattern)
+-	editorApp.state.SetSyntaxTokens(tokens...)
+-
+-	// highlightColor, _ := gvcolor.Hex2Color("#e74c3c50")
+-	// highlightColor2, _ := gvcolor.Hex2Color("#f1c40f50")
+-	// highlightColor3, _ := gvcolor.Hex2Color("#e74c3c")
+-
+-	// err := editorApp.state.AddDecorations(
+-	// 	decoration.Decoration{Source: "test", Start: 5, End: 150, Background: &decoration.Background{Color: highlightColor}},
+-	// 	decoration.Decoration{Source: "test", Start: 100, End: 200, Background: &decoration.Background{Color: highlightColor2}},
+-	// 	decoration.Decoration{Source: "test", Start: 100, End: 200, Squiggle: &decoration.Squiggle{Color: highlightColor3}},
+-	// 	decoration.Decoration{Source: "test", Start: 250, End: 400, Strikethrough: &decoration.Strikethrough{Color: highlightColor3}},
+-	// )
+-	// if err != nil {
+-	// 	panic(err)
+-	// }
+-
+-	go func() {
+-		err := editorApp.run()
+-		if err != nil {
+-			os.Exit(1)
+-		}
+-
+-		os.Exit(0)
+-	}()
+-
+-	app.Main()
+-}
+-
+ func HightlightTextByPattern(text string, pattern string) []syntax.Token {
+ 	var tokens []syntax.Token
+ 
+diff --git a/gutter.go b/gutter.go
+index 44ea923..bd265c9 100644
+--- a/gutter.go
++++ b/gutter.go
+@@ -4,6 +4,7 @@ import (
+ 	"image"
+ 	"image/color"
+ 	"sort"
++	"strings"
+ 
+ 	"gioui.org/layout"
+ 	"gioui.org/op/clip"
+@@ -11,6 +12,7 @@ import (
+ 	"gioui.org/text"
+ 	gvcolor "github.com/oligo/gvcode/color"
+ 	"github.com/oligo/gvcode/gutter"
++	"github.com/oligo/gvcode/internal/buffer"
+ 	"github.com/oligo/gvcode/internal/painter"
+ )
+ 
+@@ -53,6 +55,8 @@ func (e *Editor) buildGutterContext(gtx layout.Context, shaper *text.Shaper) gut
+ 
+ 	// Feed line contents to run button provider if it exists
+ 	e.feedLineContentsToRunButtonProvider(paragraphs)
++	// Feed line contents to sticky lines provider if it exists
++	e.feedLineContentsToStickyLinesProvider(paragraphs)
+ 
+ 	return gutter.GutterContext{
+ 		Shaper:      shaper,
+@@ -106,6 +110,47 @@ func (e *Editor) feedLineContentsToRunButtonProvider(paragraphs []gutter.Paragra
+ 	}
+ }
+ 
++// feedLineContentsToStickyLinesProvider reads all line contents and feeds them to the sticky lines provider.
++func (e *Editor) feedLineContentsToStickyLinesProvider(paragraphs []gutter.Paragraph) {
++	// Find the sticky lines provider
++	var stickyLinesProvider gutter.LineContentProvider
++
++	for _, p := range e.gutterManager.Providers() {
++		if p.ID() == "stickylines" {
++			if sl, ok := p.(gutter.LineContentProvider); ok {
++				stickyLinesProvider = sl
++				break
++			}
++		}
++	}
++
++	if stickyLinesProvider == nil {
++		return
++	}
++
++	// For sticky lines, we need ALL lines, not just visible ones
++	// to analyze the entire code structure
++	totalLines := e.text.Paragraphs()
++
++	// If we already have the right number of lines cached, skip
++	if totalLines <= 0 {
++		return
++	}
++
++	// Read all lines from the buffer using buffer.NewReader
++	srcReader := buffer.NewReader(e.buffer)
++
++	// Read all content at once
++	e.scratch = srcReader.ReadAll(e.scratch)
++	allContent := string(e.scratch)
++
++	// Split into lines
++	lines := strings.Split(allContent, "\n")
++
++	// Feed to provider
++	stickyLinesProvider.SetLineContents(lines, 0)
++}
++
+ // gutterColors returns the GutterColors based on the color palette.
+ func (e *Editor) gutterColors() *gutter.GutterColors {
+ 	if e.colorPalette == nil {
+diff --git a/gutter/manager.go b/gutter/manager.go
+index 496989a..de4d377 100644
+--- a/gutter/manager.go
++++ b/gutter/manager.go
+@@ -130,6 +130,12 @@ func (m *Manager) CollectRunButtonEvents() []RunButtonEvent {
+ 	return events
+ }
+ 
++// StickyLineEvent represents a click event on a sticky line.
++type StickyLineEvent struct {
++	Line int
++	Text string
++}
++
+ // TotalWidth returns the total width of all gutter columns including gaps.
+ func (m *Manager) TotalWidth() int {
+ 	return m.totalWidth
+diff --git a/gutter/providers/stickylines.go b/gutter/providers/stickylines.go
+new file mode 100644
+index 0000000..d9b0e77
+--- /dev/null
++++ b/gutter/providers/stickylines.go
+@@ -0,0 +1,497 @@
++package providers
++
++import (
++	"image"
++	"image/color"
++	"regexp"
++	"strings"
++
++	"gioui.org/f32"
++	"gioui.org/gesture"
++	"gioui.org/io/key"
++	"gioui.org/io/pointer"
++	"gioui.org/layout"
++	"gioui.org/op"
++	"gioui.org/op/clip"
++	"gioui.org/op/paint"
++	"gioui.org/text"
++	"gioui.org/unit"
++	gvcolor "github.com/oligo/gvcode/color"
++	"github.com/oligo/gvcode/gutter"
++)
++
++const (
++	// StickyLinesProviderID is the unique identifier for the sticky lines provider.
++	StickyLinesProviderID = "stickylines"
++
++	// DefaultMaxStickyLines is the default maximum number of sticky lines to display.
++	DefaultMaxStickyLines = 5
++)
++
++// StickyLineInfo contains information about a sticky line.
++type StickyLineInfo struct {
++	// Line is the 0-based line number.
++	Line int
++	// Text is the text content of the line.
++	Text string
++	// Indent is the indentation level (number of leading tabs/spaces).
++	Indent int
++	// Type is the type of code structure (function, type, const, etc.).
++	Type string
++}
++
++// StickyLinesProvider renders sticky lines that remain visible while scrolling.
++// This is similar to JetBrains GoLand's "Sticky Lines" feature.
++type StickyLinesProvider struct {
++	// enabled indicates whether sticky lines are enabled.
++	enabled bool
++
++	// maxStickyLines is the maximum number of sticky lines to display.
++	maxStickyLines int
++
++	// stickyLines contains the currently sticky lines.
++	stickyLines []StickyLineInfo
++
++	// allLines caches all lines from the document for structure analysis.
++	allLines []string
++
++	// structureCache caches the code structure analysis results.
++	structureCache []StickyLineInfo
++
++	// clicker handles click events on sticky lines.
++	clicker gesture.Click
++
++	// pending holds sticky line click events.
++	pending []StickyLineEvent
++
++	// paragraphs caches the visible paragraphs from the last Layout call.
++	paragraphs []gutter.Paragraph
++
++	// lineHeight caches the line height from the last Layout call.
++	lineHeight int
++
++	// viewport caches the viewport from the last Layout call.
++	viewport image.Rectangle
++
++	// stickyAreaHeight is the height occupied by sticky lines.
++	stickyAreaHeight int
++
++	// scrollOffY is the Y scroll offset from the last Layout call.
++	scrollOffY int
++
++	// stickyBackgroundColor is the background color for sticky lines.
++	stickyBackgroundColor gvcolor.Color
++
++	// stickyBorderColor is the border color for sticky lines.
++	stickyBorderColor gvcolor.Color
++
++	// stickyTextColor is the text color for sticky lines.
++	stickyTextColor gvcolor.Color
++}
++
++// StickyLineEvent represents a click event on a sticky line.
++type StickyLineEvent struct {
++	// Line is the 0-based line number that was clicked.
++	Line int
++	// Text is the text content of the line.
++	Text string
++}
++
++// NewStickyLinesProvider creates a new sticky lines provider with default settings.
++func NewStickyLinesProvider() *StickyLinesProvider {
++	return &StickyLinesProvider{
++		enabled:        true,
++		maxStickyLines: DefaultMaxStickyLines,
++		stickyLines:    make([]StickyLineInfo, 0),
++		structureCache: make([]StickyLineInfo, 0),
++		pending:        make([]StickyLineEvent, 0),
++	}
++}
++
++// SetEnabled sets whether sticky lines are enabled.
++func (p *StickyLinesProvider) SetEnabled(enabled bool) {
++	p.enabled = enabled
++}
++
++// Enabled returns whether sticky lines are enabled.
++func (p *StickyLinesProvider) Enabled() bool {
++	return p.enabled
++}
++
++// SetMaxStickyLines sets the maximum number of sticky lines to display.
++func (p *StickyLinesProvider) SetMaxStickyLines(max int) {
++	if max < 1 {
++		max = 1
++	}
++	p.maxStickyLines = max
++}
++
++// MaxStickyLines returns the maximum number of sticky lines.
++func (p *StickyLinesProvider) MaxStickyLines() int {
++	return p.maxStickyLines
++}
++
++// ID returns the unique identifier for this provider.
++func (p *StickyLinesProvider) ID() string {
++	return StickyLinesProviderID
++}
++
++// Priority returns the rendering priority. Sticky lines have priority 0,
++// meaning they are rendered on top of all other content in the editor area.
++func (p *StickyLinesProvider) Priority() int {
++	return 0
++}
++
++// Width returns the width needed for sticky lines.
++// Since sticky lines span the entire editor width, this returns 0.
++func (p *StickyLinesProvider) Width(gtx layout.Context, shaper *text.Shaper, params text.Parameters, lineCount int) unit.Dp {
++	return unit.Dp(0)
++}
++
++// SetLineContents sets the contents of all lines for structure analysis.
++// This implements the gutter.LineContentProvider interface.
++func (p *StickyLinesProvider) SetLineContents(lines []string, startLine int) {
++	// Only update if the content has changed
++	if p.allLines == nil || len(p.allLines) != len(lines) {
++		p.allLines = lines
++		p.analyzeStructure()
++	}
++}
++
++// analyzeStructure analyzes the code structure to identify lines that can be sticky.
++// This includes functions, types, constants, variables, etc.
++func (p *StickyLinesProvider) analyzeStructure() {
++	if len(p.allLines) == 0 {
++		p.structureCache = make([]StickyLineInfo, 0)
++		return
++	}
++
++	p.structureCache = make([]StickyLineInfo, 0)
++
++	// Regular expressions for different code structures (Go-specific patterns)
++	functionPattern := regexp.MustCompile(`^\s*(func|func\s+\(\s*\w+\s*\*?\s*\w+\s*\))\s+(\w+)\s*\(`)
++	typePattern := regexp.MustCompile(`^\s*type\s+(\w+)\s+(struct|interface|map|chan|func)`)
++	constPattern := regexp.MustCompile(`^\s*(const|var)\s+\(`)
++	importPattern := regexp.MustCompile(`^\s*import\s*\(`)
++	simpleConstPattern := regexp.MustCompile(`^\s*const\s+\w+`)
++	simpleVarPattern := regexp.MustCompile(`^\s*var\s+\w+`)
++
++	for i, line := range p.allLines {
++		trimmed := strings.TrimSpace(line)
++		if trimmed == "" {
++			continue
++		}
++
++		// Calculate indentation level
++		indent := p.calculateIndent(line)
++
++		var stickyType string
++		var shouldStick bool
++
++		// Check for function declarations
++		if functionPattern.MatchString(line) {
++			stickyType = "function"
++			shouldStick = true
++		} else if typePattern.MatchString(line) {
++			stickyType = "type"
++			shouldStick = true
++		} else if constPattern.MatchString(line) || importPattern.MatchString(line) {
++			stickyType = "block"
++			shouldStick = true
++		} else if simpleConstPattern.MatchString(line) {
++			stickyType = "const"
++			shouldStick = true
++		} else if simpleVarPattern.MatchString(line) {
++			// Only stick top-level variables (indentation 0 or 1)
++			if indent <= 1 {
++				stickyType = "var"
++				shouldStick = true
++			}
++		}
++
++		if shouldStick {
++			p.structureCache = append(p.structureCache, StickyLineInfo{
++				Line:   i,
++				Text:   line,
++				Indent: indent,
++				Type:   stickyType,
++			})
++		}
++	}
++}
++
++// calculateIndent calculates the indentation level of a line.
++func (p *StickyLinesProvider) calculateIndent(line string) int {
++	indent := 0
++	for _, r := range line {
++		if r == ' ' {
++			// Assume 4 spaces per indentation level
++			indent++
++		} else if r == '\t' {
++			indent += 4
++		} else {
++			break
++		}
++	}
++	return indent / 4
++}
++
++// Layout renders sticky lines on top of the editor content.
++func (p *StickyLinesProvider) Layout(gtx layout.Context, ctx gutter.GutterContext) layout.Dimensions {
++	// Cache context info for event handling
++	p.paragraphs = ctx.Paragraphs
++	p.lineHeight = ctx.LineHeight.Ceil()
++	p.viewport = ctx.Viewport
++	p.scrollOffY = ctx.Viewport.Min.Y
++
++	// Set up colors
++	p.setupColors(ctx.Colors)
++
++	// Calculate which lines should be sticky based on current scroll position
++	p.calculateStickyLines(ctx)
++
++	// Render sticky lines (if any - though rendering is done by editor)
++	if len(p.stickyLines) > 0 {
++		// p.renderStickyLines is not used here, editor handles rendering
++	}
++
++	return layout.Dimensions{Size: image.Point{X: 0, Y: p.stickyAreaHeight}}
++}
++
++// setupColors sets up the colors for sticky lines based on the context.
++func (p *StickyLinesProvider) setupColors(colors *gutter.GutterColors) {
++	if colors != nil {
++		// Use background color with slight opacity for sticky background
++		if colors.Background.IsSet() {
++			bg := colors.Background.NRGBA()
++			// Add slight transparency
++			bg.A = 0xD0
++			p.stickyBackgroundColor = gvcolor.MakeColor(bg)
++		} else {
++			p.stickyBackgroundColor = gvcolor.MakeColor(color.NRGBA{R: 0xF0, G: 0xF0, B: 0xF0, A: 0xD0})
++		}
++
++		// Use border color from text color
++		if colors.Text.IsSet() {
++			border := colors.Text.NRGBA()
++			border.A = 0x40
++			p.stickyBorderColor = gvcolor.MakeColor(border)
++		} else {
++			p.stickyBorderColor = gvcolor.MakeColor(color.NRGBA{R: 0x80, G: 0x80, B: 0x80, A: 0x40})
++		}
++
++		// Use text color for sticky text
++		if colors.Text.IsSet() {
++			p.stickyTextColor = colors.Text
++		} else {
++			p.stickyTextColor = gvcolor.MakeColor(color.NRGBA{R: 0x00, G: 0x00, B: 0x00, A: 0xFF})
++		}
++	} else {
++		p.stickyBackgroundColor = gvcolor.MakeColor(color.NRGBA{R: 0xF0, G: 0xF0, B: 0xF0, A: 0xD0})
++		p.stickyBorderColor = gvcolor.MakeColor(color.NRGBA{R: 0x80, G: 0x80, B: 0x80, A: 0x40})
++		p.stickyTextColor = gvcolor.MakeColor(color.NRGBA{R: 0x00, G: 0x00, B: 0x00, A: 0xFF})
++	}
++}
++
++// calculateStickyLines determines which lines should be sticky based on scroll position.
++func (p *StickyLinesProvider) calculateStickyLines(ctx gutter.GutterContext) {
++	if !p.enabled || len(p.structureCache) == 0 {
++		p.stickyLines = p.stickyLines[:0]
++		p.stickyAreaHeight = 0
++		return
++	}
++
++	// Find the first visible paragraph
++	firstVisibleLine := -1
++	for _, para := range ctx.Paragraphs {
++		if para.EndY >= ctx.Viewport.Min.Y && para.StartY <= ctx.Viewport.Max.Y {
++			firstVisibleLine = para.Index
++			break
++		}
++	}
++
++	if firstVisibleLine == -1 {
++		p.stickyLines = p.stickyLines[:0]
++		p.stickyAreaHeight = 0
++		return
++	}
++
++	// Find all structure lines that are above or at the first visible line
++	p.stickyLines = p.stickyLines[:0]
++	for _, info := range p.structureCache {
++		if info.Line <= firstVisibleLine {
++			p.stickyLines = append(p.stickyLines, info)
++		} else {
++			break
++		}
++	}
++
++	// Limit to max sticky lines
++	if len(p.stickyLines) > p.maxStickyLines {
++		p.stickyLines = p.stickyLines[len(p.stickyLines)-p.maxStickyLines:]
++	}
++
++	// Calculate sticky area height
++	p.stickyAreaHeight = len(p.stickyLines) * p.lineHeight
++}
++
++// renderStickyLines renders the sticky lines at the top of the viewport.
++func (p *StickyLinesProvider) renderStickyLines(gtx layout.Context, ctx gutter.GutterContext) {
++	lineHeightPx := p.lineHeight
++
++	// Draw background and text for each sticky line
++	for i, sticky := range p.stickyLines {
++		stickyY := i * lineHeightPx
++
++		// Draw background
++		bgRect := image.Rect(0, stickyY, gtx.Constraints.Max.X, stickyY+lineHeightPx)
++		bgStack := clip.Rect(bgRect).Push(gtx.Ops)
++		paint.ColorOp{Color: p.stickyBackgroundColor.NRGBA()}.Add(gtx.Ops)
++		paint.PaintOp{}.Add(gtx.Ops)
++		bgStack.Pop()
++
++		// Draw border at bottom
++		if i < len(p.stickyLines)-1 {
++			borderRect := image.Rect(0, stickyY+lineHeightPx-1, gtx.Constraints.Max.X, stickyY+lineHeightPx)
++			borderStack := clip.Rect(borderRect).Push(gtx.Ops)
++			paint.ColorOp{Color: p.stickyBorderColor.NRGBA()}.Add(gtx.Ops)
++			paint.PaintOp{}.Add(gtx.Ops)
++			borderStack.Pop()
++		}
++
++		// Register click handler
++		pointer.CursorPointer.Add(gtx.Ops)
++		clip.Rect(bgRect).Push(gtx.Ops).Pop()
++		p.clicker.Add(gtx.Ops)
++
++		// Draw text
++		params := ctx.TextParams
++		params.MinWidth = 0
++		params.MaxLines = 1
++
++		// Trim whitespace for display
++		displayText := strings.TrimLeft(sticky.Text, "\t")
++		displayText = strings.TrimRight(displayText, " \t\r\n")
++
++		ctx.Shaper.LayoutString(params, displayText)
++
++		glyphs := make([]text.Glyph, 0)
++		var bounds image.Rectangle
++
++		for {
++			g, ok := ctx.Shaper.NextGlyph()
++			if !ok {
++				break
++			}
++
++			bounds.Min.X = min(bounds.Min.X, g.X.Floor())
++			bounds.Min.Y = min(bounds.Min.Y, int(g.Y)-g.Ascent.Floor())
++			bounds.Max.X = max(bounds.Max.X, (g.X + g.Advance).Ceil())
++			bounds.Max.Y = max(bounds.Max.Y, int(g.Y)+g.Descent.Ceil())
++
++			glyphs = append(glyphs, g)
++		}
++
++		if len(glyphs) > 0 {
++			// Transform to the correct position
++			yPos := float32(stickyY) + float32(lineHeightPx)/2
++			trans := op.Affine(f32.Affine2D{}.Offset(
++				f32.Point{X: float32(glyphs[0].X.Floor()) + 8, Y: yPos},
++			)).Push(gtx.Ops)
++
++			// Draw the glyphs
++			path := ctx.Shaper.Shape(glyphs)
++			outline := clip.Outline{Path: path}.Op().Push(gtx.Ops)
++
++			paint.ColorOp{Color: p.stickyTextColor.NRGBA()}.Add(gtx.Ops)
++			paint.PaintOp{}.Add(gtx.Ops)
++
++			outline.Pop()
++			trans.Pop()
++		}
++	}
++}
++
++// GetPendingEvents returns pending sticky line events and clears the pending list.
++func (p *StickyLinesProvider) GetPendingEvents() []StickyLineEvent {
++	events := p.pending
++	p.pending = p.pending[:0]
++	return events
++}
++
++// StickyLinesHeight returns the height occupied by sticky lines.
++func (p *StickyLinesProvider) StickyLinesHeight() int {
++	return p.stickyAreaHeight
++}
++
++// HandleClick handles click events on sticky lines.
++// Since sticky lines are rendered over the editor, not in the gutter,
++// this method is not used. Click handling is done via HandleStickyLineClick.
++func (p *StickyLinesProvider) HandleClick(line int, source pointer.Source, numClicks int, modifiers key.Modifiers) bool {
++	// Sticky lines are not in the gutter area, so this is not used
++	return false
++}
++
++// HandleHover handles hover events on sticky lines.
++// Since sticky lines are rendered over the editor, not in the gutter,
++// this method is not used.
++func (p *StickyLinesProvider) HandleHover(line int) *gutter.HoverInfo {
++	// Sticky lines are not in the gutter area, so this is not used
++	return nil
++}
++
++// HandleStickyLineClick handles a click on a sticky line.
++// The y parameter is the Y coordinate within the sticky lines area.
++func (p *StickyLinesProvider) HandleStickyLineClick(y int) bool {
++	if p.stickyAreaHeight == 0 || len(p.stickyLines) == 0 {
++		return false
++	}
++
++	// Find which sticky line was clicked (y coordinate)
++	stickyLineIndex := y / p.lineHeight
++
++	if stickyLineIndex >= 0 && stickyLineIndex < len(p.stickyLines) {
++		// Generate sticky line event
++		info := p.stickyLines[stickyLineIndex]
++		p.pending = append(p.pending, StickyLineEvent{
++			Line: info.Line,
++			Text: info.Text,
++		})
++		return true
++	}
++
++	return false
++}
++
++// GetStickyLinesInfo returns the current sticky lines and their total height.
++// This is used by the Editor to render sticky lines.
++func (p *StickyLinesProvider) GetStickyLinesInfo() ([]struct {
++	Line   int
++	Text   string
++	Indent int
++	Type   string
++}, int,
++) {
++	result := make([]struct {
++		Line   int
++		Text   string
++		Indent int
++		Type   string
++	}, len(p.stickyLines))
++
++	for i, info := range p.stickyLines {
++		result[i] = struct {
++			Line   int
++			Text   string
++			Indent int
++			Type   string
++		}{
++			Line:   info.Line,
++			Text:   info.Text,
++			Indent: info.Indent,
++			Type:   info.Type,
++		}
++	}
++
++	return result, p.stickyAreaHeight
++}
+-- 
+2.47.0.windows.2
+

@@ -1,0 +1,42 @@
+name: fork-update
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+
+jobs:
+  nuclear-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.0'
+          check-latest: true
+
+      - name: Set up environment
+        run: |
+          echo "GH_USER=ddkwork" >> $GITHUB_ENV
+          echo "UPSTREAM_URL=https://github.com/gioui/gio" >> $GITHUB_ENV
+          echo "FORK_URL=https://github.com/${{ env.GH_USER }}/gio" >> $GITHUB_ENV
+
+      - name: Setup GitHub CLI
+        run: |
+          gh auth status || true
+          echo "GH_TOKEN=${{ secrets.tk }}" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Run update script
+        run: |
+          echo "GOMEMLIMIT=8GiB" >> $GITHUB_ENV
+          go run .
+        env:
+          GH_USER: ${{ env.GH_USER }}
+          GH_TOKEN: ${{ secrets.tk }}
