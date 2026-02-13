@@ -1,0 +1,544 @@
+From d84ebb1904ac1e8542232bc35b12a69c325949dc Mon Sep 17 00:00:00 2001
+From: ddkwork <2762713521@qq.com>
+Date: Fri, 13 Feb 2026 12:10:06 +0800
+Subject: [PATCH] refactor: 优化编辑器配置和功能集成
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 修复 .gitignore 文件格式，将 .DS_Store 和 .idea 分开
+- 改进编辑器光标移动逻辑，支持精确的坐标定位
+- 重构 example/main.go，将所有编辑器选项整合到 WithOptions 调用中
+- 添加 WithCodeFolding() 选项函数，启用代码折叠功能
+- 添加 WithColumnEdit() 选项函数，启用列编辑模式
+
+🤖 Generated with CodeMate
+---
+ .gitignore      |   3 +-
+ editor.go       | 281 ++++++++++++++++++++++++++++++++++++++++++++++--
+ event.go        |  25 ++++-
+ example/main.go |  15 ++-
+ option.go       |  28 +++++
+ 5 files changed, 330 insertions(+), 22 deletions(-)
+
+diff --git a/.gitignore b/.gitignore
+index e3cf788..0342402 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,5 +1,6 @@
+ .vscode
+-.DS_Store.idea
++.DS_Store
++.idea
+ *.cmd
+ *.log
+ *.ps1
+diff --git a/editor.go b/editor.go
+index 77a7449..ab34454 100644
+--- a/editor.go
++++ b/editor.go
+@@ -1,7 +1,9 @@
+ package gvcode
+ 
+ import (
++	"fmt"
+ 	"image"
++	"image/color"
+ 	"io"
+ 	"strings"
+ 	"time"
+@@ -18,7 +20,7 @@ import (
+ 	"gioui.org/op/paint"
+ 	"gioui.org/text"
+ 	"gioui.org/unit"
+-	"github.com/oligo/gvcode/color"
++	gvcolor "github.com/oligo/gvcode/color"
+ 	"github.com/oligo/gvcode/gutter"
+ 	"github.com/oligo/gvcode/internal/buffer"
+ 	gestureExt "github.com/oligo/gvcode/internal/gesture"
+@@ -36,7 +38,7 @@ type Editor struct {
+ 	buffer     buffer.TextSource
+ 	snippetCtx *snippetContext
+ 	// colorPalette configures the color scheme used for syntax highlighting.
+-	colorPalette *color.ColorPalette
++	colorPalette *gvcolor.ColorPalette
+ 	// gutterGap specifies the right inset between the gutter and the
+ 	// editor text area.
+ 	gutterGap unit.Dp
+@@ -80,6 +82,8 @@ type Editor struct {
+ 	selectionHighlighter selectionHighlighter
+ 	// column edit mode state
+ 	columnEdit columnEditState
++	// sticky lines state
++	stickyLinesClicker gesture.Click
+ }
+ 
+ // columnEditState tracks state for column/vertical editing mode
+@@ -255,7 +259,7 @@ func (e *Editor) Layout(gtx layout.Context, lt *text.Shaper) layout.Dimensions {
+ 		}),
+ 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+ 			e.text.Layout(gtx, lt)
+-			dims := e.layout(gtx)
++			dims := e.layout(gtx, lt)
+ 			if e.completor != nil {
+ 				e.text.PaintOverlay(gtx, e.completor.Offset(), e.completor.Layout)
+ 			}
+@@ -264,7 +268,7 @@ func (e *Editor) Layout(gtx layout.Context, lt *text.Shaper) layout.Dimensions {
+ 	)
+ }
+ 
+-func (e *Editor) layout(gtx layout.Context) layout.Dimensions {
++func (e *Editor) layout(gtx layout.Context, shaper *text.Shaper) layout.Dimensions {
+ 	defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
+ 	pointer.CursorText.Add(gtx.Ops)
+ 	event.Op(gtx.Ops, e)
+@@ -293,7 +297,7 @@ func (e *Editor) layout(gtx layout.Context) layout.Dimensions {
+ 		panic("No color palette is set!")
+ 	}
+ 
+-	var textColor, selectColor color.Color
++	var textColor, selectColor gvcolor.Color
+ 	if e.colorPalette.Foreground.IsSet() {
+ 		textColor = e.colorPalette.Foreground
+ 	}
+@@ -326,6 +330,10 @@ func (e *Editor) layout(gtx layout.Context) layout.Dimensions {
+ 	if gtx.Enabled() {
+ 		e.paintCaret(gtx, textColor)
+ 	}
++
++	// Render sticky lines if enabled
++	e.renderStickyLines(gtx, shaper, textColor)
++
+ 	return layout.Dimensions{Size: gtx.Constraints.Max}
+ }
+ 
+@@ -337,21 +345,21 @@ func (e *Editor) PaintOverlay(gtx layout.Context, position image.Point, w layout
+ 
+ // paintSelection paints the contrasting background for selected text using the provided
+ // material to set the painting material for the selection.
+-func (e *Editor) paintSelection(gtx layout.Context, material color.Color) {
++func (e *Editor) paintSelection(gtx layout.Context, material gvcolor.Color) {
+ 	e.initBuffer()
+ 	e.text.PaintSelection(gtx, material.Op(gtx.Ops))
+ }
+ 
+ // paintText paints the text glyphs using the provided material to set the fill of the
+ // glyphs.
+-func (e *Editor) paintText(gtx layout.Context, material color.Color) {
++func (e *Editor) paintText(gtx layout.Context, material gvcolor.Color) {
+ 	e.initBuffer()
+ 	e.text.PaintText(gtx, material.Op(gtx.Ops))
+ }
+ 
+ // paintCaret paints the text glyphs using the provided material to set the fill material
+ // of the caret rectangle.
+-func (e *Editor) paintCaret(gtx layout.Context, material color.Color) {
++func (e *Editor) paintCaret(gtx layout.Context, material gvcolor.Color) {
+ 	e.initBuffer()
+ 	if !e.showCaret || e.mode == ModeReadOnly {
+ 		return
+@@ -360,7 +368,7 @@ func (e *Editor) paintCaret(gtx layout.Context, material color.Color) {
+ }
+ 
+ // paintColumnSelection paints the column selection rectangles for column editing mode
+-func (e *Editor) paintColumnSelection(gtx layout.Context, material color.Color) {
++func (e *Editor) paintColumnSelection(gtx layout.Context, material gvcolor.Color) {
+ 	e.initBuffer()
+ 
+ 	lineHeight := e.text.GetLineHeight().Round()
+@@ -394,7 +402,7 @@ func (e *Editor) paintColumnSelection(gtx layout.Context, material color.Color)
+ }
+ 
+ // paintColumnCarets paints multiple carets for column editing mode
+-func (e *Editor) paintColumnCarets(gtx layout.Context, material color.Color) {
++func (e *Editor) paintColumnCarets(gtx layout.Context, material gvcolor.Color) {
+ 	e.initBuffer()
+ 	if !e.showCaret || e.mode == ModeReadOnly {
+ 		return
+@@ -900,7 +908,7 @@ func (e *Editor) TabStyle() (TabStyle, int) {
+ 	return Tabs, e.text.TabWidth
+ }
+ 
+-func (e *Editor) ColorPalette() *color.ColorPalette {
++func (e *Editor) ColorPalette() *gvcolor.ColorPalette {
+ 	return e.colorPalette
+ }
+ 
+@@ -1087,6 +1095,70 @@ func (e *Editor) moveColumnCarets(delta int) {
+ 	e.scrollCaret = true
+ }
+ 
++// startColumnSelection starts a new column selection at the given position.
++func (e *Editor) startColumnSelection(pos image.Point) {
++	e.initBuffer()
++
++	line, col, runeOff := e.text.QueryPos(pos)
++	if runeOff >= 0 {
++		e.columnEdit.anchor = pos
++		e.columnEdit.selections = []columnCursor{{
++			line:   line,
++			col:    col,
++			startX: pos.X,
++			endX:   pos.X,
++		}}
++	}
++}
++
++// updateColumnSelection updates the column selection based on mouse drag position.
++// This is used for Alt+mouse drag to create rectangular selections.
++func (e *Editor) updateColumnSelection(_ layout.Context, pos image.Point) {
++	e.initBuffer()
++
++	anchor := e.columnEdit.anchor
++
++	// Calculate selection bounds
++	startX := min(anchor.X, pos.X)
++	endX := max(anchor.X, pos.X)
++	startY := min(anchor.Y, pos.Y)
++	endY := max(anchor.Y, pos.Y)
++
++	// Get line height (Note: fixed.Int26_6 needs Round())
++	lineHeight := e.text.GetLineHeight().Round()
++	scrollOff := e.text.ScrollOff()
++
++	// Convert Y coordinates to line numbers
++	startLine := (startY + scrollOff.Y) / lineHeight
++	endLine := (endY + scrollOff.Y) / lineHeight
++
++	e.columnEdit.selections = nil
++	totalLines := e.text.Paragraphs()
++
++	// Create a cursor for each line in the rectangle
++	for lineNum := startLine; lineNum <= endLine; lineNum++ {
++		if lineNum < 0 || lineNum >= totalLines {
++			continue
++		}
++
++		screenY := lineNum*lineHeight - scrollOff.Y
++		startPos := image.Point{X: startX, Y: screenY}
++
++		// Query the column position for this line
++		_, col, off := e.text.QueryPos(startPos)
++
++		if off >= 0 {
++			e.columnEdit.selections = append(e.columnEdit.selections,
++				columnCursor{
++					line:   lineNum,
++					col:    col,
++					startX: startX,
++					endX:   endX,
++				})
++		}
++	}
++}
++
+ func (s ChangeEvent) isEditorEvent()        {}
+ func (s SelectEvent) isEditorEvent()        {}
+ func (s HoverEvent) isEditorEvent()         {}
+@@ -1103,3 +1175,190 @@ type RunButtonEventWrapper struct {
+ }
+ 
+ func (RunButtonEventWrapper) isEditorEvent() {}
++
++// StickyLineEventWrapper wraps a sticky line click event.
++type StickyLineEventWrapper struct {
++	Event gutter.StickyLineEvent
++}
++
++func (StickyLineEventWrapper) isEditorEvent() {}
++
++// renderStickyLines renders sticky lines at the top of the editor viewport.
++// Sticky lines show code structure (functions, types, etc.) that has been scrolled
++// out of view, helping users maintain context.
++func (e *Editor) renderStickyLines(gtx layout.Context, shaper *text.Shaper, textColor gvcolor.Color) {
++	if e.gutterManager == nil {
++		fmt.Println("[StickyLines] DEBUG: gutterManager is nil")
++		return
++	}
++
++	// Find the sticky lines provider
++	var stickyProvider interface {
++		GetStickyLinesInfo() ([]struct {
++			Line   int
++			Text   string
++			Indent int
++			Type   string
++		}, int)
++		HandleStickyLineClick(y int) bool
++	}
++
++	for _, p := range e.gutterManager.Providers() {
++		if p.ID() == "stickylines" {
++			if provider, ok := p.(interface {
++				GetStickyLinesInfo() ([]struct {
++					Line   int
++					Text   string
++					Indent int
++					Type   string
++				}, int)
++				HandleStickyLineClick(y int) bool
++			}); ok {
++				stickyProvider = provider
++				break
++			}
++		}
++	}
++
++	if stickyProvider == nil {
++		fmt.Println("[StickyLines] DEBUG: stickyProvider is nil")
++		return
++	}
++
++	stickyLines, stickyHeight := stickyProvider.GetStickyLinesInfo()
++	fmt.Printf("[StickyLines] DEBUG: stickyLines=%d, stickyHeight=%d\n", len(stickyLines), stickyHeight)
++	if len(stickyLines) == 0 || stickyHeight == 0 {
++		return
++	}
++
++	lineHeight := e.text.GetLineHeight().Round()
++	fmt.Printf("[StickyLines] DEBUG: lineHeight=%d\n", lineHeight)
++
++	// Set up colors
++	var bgColor, borderColor color.NRGBA
++	if e.colorPalette != nil && e.colorPalette.Background.IsSet() {
++		bgColor = e.colorPalette.Background.NRGBA()
++	} else {
++		bgColor = color.NRGBA{R: 0xF0, G: 0xF0, B: 0xF0, A: 0xD0}
++	}
++	bgColor.A = 0xD0 // Slight transparency
++
++	textColorNRGBA := textColor.NRGBA()
++	borderColor = textColorNRGBA
++	borderColor.A = 0x40
++
++	// Render each sticky line (MUST render before processing events!)
++	for i, sticky := range stickyLines {
++		stickyY := i * lineHeight
++
++		// Draw background
++		bgRect := image.Rect(0, stickyY, gtx.Constraints.Max.X, stickyY+lineHeight)
++		bgStack := clip.Rect(bgRect).Push(gtx.Ops)
++		paint.ColorOp{Color: bgColor}.Add(gtx.Ops)
++		paint.PaintOp{}.Add(gtx.Ops)
++		bgStack.Pop()
++
++		// Draw border at bottom
++		if i < len(stickyLines)-1 {
++			borderRect := image.Rect(0, stickyY+lineHeight-1, gtx.Constraints.Max.X, stickyY+lineHeight)
++			borderStack := clip.Rect(borderRect).Push(gtx.Ops)
++			paint.ColorOp{Color: borderColor}.Add(gtx.Ops)
++			paint.PaintOp{}.Add(gtx.Ops)
++			borderStack.Pop()
++		}
++
++		// Register click area
++		pointer.CursorPointer.Add(gtx.Ops)
++		clip.Rect(bgRect).Push(gtx.Ops).Pop()
++		e.stickyLinesClicker.Add(gtx.Ops)
++
++		// Draw text
++		params := e.text.Params()
++		params.MinWidth = 0
++		params.MaxLines = 1
++
++		// Trim whitespace for display
++		displayText := strings.TrimLeft(sticky.Text, "\t")
++		displayText = strings.TrimRight(displayText, " \t\r\n")
++
++		if displayText != "" && shaper != nil {
++			shaper.LayoutString(params, displayText)
++
++			glyphs := make([]text.Glyph, 0)
++			for {
++				g, ok := shaper.NextGlyph()
++				if !ok {
++					break
++				}
++				glyphs = append(glyphs, g)
++			}
++
++			if len(glyphs) > 0 {
++				// Transform to the correct position
++				yPos := float32(stickyY) + float32(lineHeight)/2
++				trans := op.Affine(f32.Affine2D{}.Offset(
++					f32.Point{X: float32(glyphs[0].X.Floor()) + 8, Y: yPos},
++				)).Push(gtx.Ops)
++
++				// Draw the glyphs
++				path := shaper.Shape(glyphs)
++				outline := clip.Outline{Path: path}.Op().Push(gtx.Ops)
++
++				paint.ColorOp{Color: textColorNRGBA}.Add(gtx.Ops)
++				paint.PaintOp{}.Add(gtx.Ops)
++
++				outline.Pop()
++				trans.Pop()
++			}
++		}
++	}
++
++	// Process click events (MUST be after registering click areas!)
++	fmt.Println("[StickyLines] DEBUG: Processing click events...")
++	for {
++		evt, ok := e.stickyLinesClicker.Update(gtx.Source)
++		fmt.Printf("[StickyLines] DEBUG: evt=%+v, ok=%v\n", evt, ok)
++		if !ok {
++			break
++		}
++
++		if evt.Kind == gesture.KindClick {
++			clickY := int(evt.Position.Y)
++			stickyLineIndex := clickY / lineHeight
++			fmt.Printf("[StickyLines] DEBUG: CLICK! clickY=%d, stickyLineIndex=%d, lineHeight=%d\n", clickY, stickyLineIndex, lineHeight)
++
++			if stickyLineIndex >= 0 && stickyLineIndex < len(stickyLines) {
++				targetLine := stickyLines[stickyLineIndex].Line
++				fmt.Printf("[StickyLines] DEBUG: Jumping to line %d\n", targetLine)
++				e.moveToLine(targetLine)
++
++				// Also notify provider
++				stickyProvider.HandleStickyLineClick(clickY)
++
++				// Generate event
++				e.pending = append(e.pending, StickyLineEventWrapper{
++					Event: gutter.StickyLineEvent{
++						Line: targetLine,
++						Text: stickyLines[stickyLineIndex].Text,
++					},
++				})
++			}
++		}
++	}
++}
++
++// moveToLine scrolls the editor to make the specified line visible at the top.
++func (e *Editor) moveToLine(lineNum int) {
++	textLayout := e.text.TextLayout()
++	paragraphs := textLayout.Paragraphs
++
++	if lineNum < 0 || lineNum >= len(paragraphs) {
++		return
++	}
++
++	para := paragraphs[lineNum]
++	scrollOff := e.text.ScrollOff()
++
++	// Scroll to make this line visible near the top
++	e.text.ScrollRel(0, para.StartY-scrollOff.Y)
++}
+diff --git a/event.go b/event.go
+index aaf7487..a960702 100644
+--- a/event.go
++++ b/event.go
+@@ -145,7 +145,14 @@ func (e *Editor) processPointerEvent(gtx layout.Context, ev event.Event) (Editor
+ 				e.scrollCaret = true
+ 			}
+ 
+-			if evt.Modifiers == key.ModShift {
++			// Alt+mouse drag for column selection
++			if evt.Modifiers.Contain(key.ModAlt) {
++				e.SetColumnEditMode(true)
++				e.startColumnSelection(image.Point{
++					X: int(math.Round(float64(evt.Position.X))),
++					Y: int(math.Round(float64(evt.Position.Y))),
++				})
++			} else if evt.Modifiers == key.ModShift {
+ 				start, end := e.text.Selection()
+ 				// If they clicked closer to the end, then change the end to
+ 				// where the caret used to be (effectively swapping start & end).
+@@ -186,10 +193,18 @@ func (e *Editor) processPointerEvent(gtx layout.Context, ev event.Event) (Editor
+ 		case evt.Kind == pointer.Drag && evt.Source == pointer.Mouse:
+ 			if e.dragging {
+ 				e.blinkStart = gtx.Now
+-				e.text.MoveCoord(image.Point{
+-					X: int(math.Round(float64(evt.Position.X))),
+-					Y: int(math.Round(float64(evt.Position.Y))),
+-				})
++				// If column edit mode is active, update column selection
++				if e.ColumnEditEnabled() {
++					e.updateColumnSelection(gtx, image.Point{
++						X: int(math.Round(float64(evt.Position.X))),
++						Y: int(math.Round(float64(evt.Position.Y))),
++					})
++				} else {
++					e.text.MoveCoord(image.Point{
++						X: int(math.Round(float64(evt.Position.X))),
++						Y: int(math.Round(float64(evt.Position.Y))),
++					})
++				}
+ 				e.scrollCaret = true
+ 
+ 				if release {
+diff --git a/example/main.go b/example/main.go
+index 35cbe0c..da5a9fa 100644
+--- a/example/main.go
++++ b/example/main.go
+@@ -85,12 +85,17 @@ func main() {
+ 	colorScheme.AddStyle("keyword", syntax.Underline, keywordColor, gvcolor.Color{})
+ 
+ 	editorApp.state.WithOptions(
+-		gvcode.WrapLine(true),
+-		gvcode.WithAutoCompletion(cm),
+-		gvcode.WithColorScheme(colorScheme),
+-		gvcode.WithCornerRadius(unit.Dp(4)),
++		gvcode.WrapLine(true),               // 自动换行
++		gvcode.WithAutoCompletion(cm),       // 自动补全
++		gvcode.WithColorScheme(colorScheme), // 颜色方案
++		gvcode.WithCornerRadius(unit.Dp(4)), // 圆角
++		gvcode.WithGutterGap(unit.Dp(12)),   // Gutter间距
++		gvcode.WithDefaultGutters(),         // 行号
++		gvcode.WithRunButtons(),             // 运行按钮
++		gvcode.WithStickyLines(),            // 粘性行
++		gvcode.WithCodeFolding(),            // 代码折叠
++		gvcode.WithColumnEdit(),             // 列编辑模式
+ 	)
+-	editorApp.state.WithOptions(gvcode.WithDefaultGutters(), gvcode.WithRunButtons(), gvcode.WithStickyLines(), gvcode.WithGutterGap(unit.Dp(12)))
+ 
+ 	tokens := HightlightTextByPattern(editorApp.state.Text(), syntaxPattern)
+ 	editorApp.state.SetSyntaxTokens(tokens...)
+diff --git a/option.go b/option.go
+index afed7e4..a102b2f 100644
+--- a/option.go
++++ b/option.go
+@@ -6,6 +6,7 @@ import (
+ 	"gioui.org/unit"
+ 	"github.com/oligo/gvcode/gutter"
+ 	"github.com/oligo/gvcode/gutter/providers"
++	"github.com/oligo/gvcode/internal/folding"
+ 	"github.com/oligo/gvcode/textstyle/syntax"
+ )
+ 
+@@ -231,3 +232,30 @@ func WithStickyLines() EditorOption {
+ 		e.gutterManager.Register(providers.NewStickyLinesProvider())
+ 	}
+ }
++
++// WithCodeFolding enables code folding functionality.
++// Code folding allows users to collapse and expand code blocks (functions, types, imports, etc.).
++// Shortcuts: Alt+C toggles column mode, Ctrl+[ / Ctrl+] for fold/unfold, Ctrl+Shift+[ / Ctrl+Shift+] for fold/unfold all.
++func WithCodeFolding() EditorOption {
++	return func(e *Editor) {
++		e.initBuffer()
++		// Create folding manager and attach to text view
++		foldManager := folding.NewManager()
++		e.text.SetFoldManager(foldManager)
++		// Register fold button provider in gutter
++		if e.gutterManager == nil {
++			e.gutterManager = gutter.NewManager()
++		}
++		e.gutterManager.Register(providers.NewFoldButtonProvider(foldManager))
++	}
++}
++
++// WithColumnEdit enables column (vertical) editing mode.
++// Column editing allows selecting and editing a rectangular block of text across multiple lines.
++// Shortcut: Alt+C toggles column mode on/off.
++func WithColumnEdit() EditorOption {
++	return func(e *Editor) {
++		e.initBuffer()
++		e.SetColumnEditMode(true)
++	}
++}
+-- 
+2.47.0.windows.2
+
