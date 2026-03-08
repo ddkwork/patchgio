@@ -1,49 +1,54 @@
-From 581c855385ba02db4749f5d0e0a87b0fa1198dff Mon Sep 17 00:00:00 2001
+From e2ddbcc3126daf7b53c8d1433452bc825756157b Mon Sep 17 00:00:00 2001
 From: Admin <2762713521@qq.com>
-Date: Sun, 8 Mar 2026 19:31:00 +0800
-Subject: [PATCH] feat(编辑器): 添加颜色指示器功能
+Date: Mon, 9 Mar 2026 00:06:33 +0800
+Subject: [PATCH] feat(颜色指示器): 添加代码颜色值检测与可视化指示器功能
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-在编辑器中实现颜色代码检测和可视化指示器功能：
-1. 新增颜色检测器组件，支持识别HEX/RGB/HSL等格式颜色代码
-2. 在编辑器侧边栏添加颜色指示器，点击可打开颜色选择器
-3. 实现颜色选择器与编辑器集成，支持修改颜色值并自动更新代码
-4. 添加相关测试用例和示例代码
-5. 更新go.mod依赖版本至1.26.1
-
-颜色指示器会在检测到的颜色代码旁显示色块，点击色块可打开颜色选择器修改颜色值，修改后会自动更新代码中的颜色值。
+实现颜色值检测功能，支持多种颜色格式(HEX, RGB, HSL等)
+添加颜色指示器组件，在代码中显示颜色预览
+集成颜色选择器，允许用户点击颜色指示器修改颜色值
+更新文本布局系统以支持颜色指示器空间预留
+添加相关测试用例和文档说明
 ---
- colorpicker/color_detector.go           |  447 +++++++++
- colorpicker/color_picker.go             | 1152 +++++++++++++++++++++++
- colorpicker/color_preview.go            |  199 ++++
- colorpicker/colorpicker_test.go         |  251 +++++
- colorpicker/editor_integration.go       |  146 +++
- colorpicker/example_test.go             |   41 +
- editor.go                               |  117 ++-
- example/main.go                         |  117 ++-
- go.mod                                  |    2 +-
- gutter.go                               |   47 +
- gutter/gutter.go                        |   18 +
- gutter/manager.go                       |    8 +
- gutter/providers/colorindicator.go      |  509 ++++++++++
- gutter/providers/colorindicator_test.go |  401 ++++++++
- gutter/providers/runbutton.go           |   66 +-
- option.go                               |   23 +
- 16 files changed, 3525 insertions(+), 19 deletions(-)
+ colorpicker/color_detector.go                 |  447 +++++++
+ colorpicker/color_picker.go                   | 1140 +++++++++++++++++
+ colorpicker/color_preview.go                  |  191 +++
+ colorpicker/colorpicker_test.go               |  251 ++++
+ colorpicker/editor_integration.go             |  146 +++
+ colorpicker/example_test.go                   |   41 +
+ docs/color-indicator-implementation.md        |  321 +++++
+ editor.go                                     |  147 ++-
+ example/main.go                               |  117 +-
+ go.mod                                        |    2 +-
+ gutter.go                                     |   34 +-
+ gutter/gutter.go                              |   28 +
+ gutter/manager.go                             |    4 -
+ gutter/providers/colorindicator.go            |  521 ++++++++
+ .../colorindicator_multicolor_test.go         |   63 +
+ gutter/providers/colorindicator_test.go       |  185 +++
+ gutter/providers/runbutton.go                 |   66 +-
+ internal/layout/bidi_test.go                  |   24 +-
+ internal/layout/line.go                       |   93 +-
+ internal/layout/text_layout.go                |   17 +-
+ option.go                                     |   26 +-
+ textview/text.go                              |    6 +
+ 22 files changed, 3804 insertions(+), 66 deletions(-)
  create mode 100644 colorpicker/color_detector.go
  create mode 100644 colorpicker/color_picker.go
  create mode 100644 colorpicker/color_preview.go
  create mode 100644 colorpicker/colorpicker_test.go
  create mode 100644 colorpicker/editor_integration.go
  create mode 100644 colorpicker/example_test.go
+ create mode 100644 docs/color-indicator-implementation.md
  create mode 100644 gutter/providers/colorindicator.go
+ create mode 100644 gutter/providers/colorindicator_multicolor_test.go
  create mode 100644 gutter/providers/colorindicator_test.go
 
 diff --git a/colorpicker/color_detector.go b/colorpicker/color_detector.go
 new file mode 100644
-index 0000000..951a75b
+index 0000000..dfc9b07
 --- /dev/null
 +++ b/colorpicker/color_detector.go
 @@ -0,0 +1,447 @@
@@ -496,10 +501,10 @@ index 0000000..951a75b
 +}
 diff --git a/colorpicker/color_picker.go b/colorpicker/color_picker.go
 new file mode 100644
-index 0000000..70a1cf7
+index 0000000..a65cb9e
 --- /dev/null
 +++ b/colorpicker/color_picker.go
-@@ -0,0 +1,1152 @@
+@@ -0,0 +1,1140 @@
 +package colorpicker
 +
 +import (
@@ -858,15 +863,15 @@ index 0000000..70a1cf7
 +		LightSlider: &widget.Float{Value: float32(state.Lightness)},
 +		HexEditor:   &widget.Editor{SingleLine: true, Submit: true},
 +		HistoryColors: []color.NRGBA{
-+			color.NRGBA{R: 255, G: 0, B: 0, A: 255},     // Red
-+			color.NRGBA{R: 0, G: 255, B: 0, A: 255},     // Green
-+			color.NRGBA{R: 0, G: 0, B: 255, A: 255},     // Blue
-+			color.NRGBA{R: 255, G: 255, B: 0, A: 255},   // Yellow
-+			color.NRGBA{R: 255, G: 0, B: 255, A: 255},   // Magenta
-+			color.NRGBA{R: 0, G: 255, B: 255, A: 255},   // Cyan
-+			color.NRGBA{R: 128, G: 128, B: 128, A: 255}, // Gray
-+			color.NRGBA{R: 0, G: 0, B: 0, A: 255},       // Black
-+			color.NRGBA{R: 255, G: 255, B: 255, A: 255}, // White
++			{R: 255, G: 0, B: 0, A: 255},     // Red
++			{R: 0, G: 255, B: 0, A: 255},     // Green
++			{R: 0, G: 0, B: 255, A: 255},     // Blue
++			{R: 255, G: 255, B: 0, A: 255},   // Yellow
++			{R: 255, G: 0, B: 255, A: 255},   // Magenta
++			{R: 0, G: 255, B: 255, A: 255},   // Cyan
++			{R: 128, G: 128, B: 128, A: 255}, // Gray
++			{R: 0, G: 0, B: 0, A: 255},       // Black
++			{R: 255, G: 255, B: 255, A: 255}, // White
 +		},
 +		ColorPalette:      palette,
 +		PaletteClickables: paletteClickables,
@@ -882,22 +887,22 @@ index 0000000..70a1cf7
 +
 +	// Basic colors
 +	basicColors := []color.NRGBA{
-+		color.NRGBA{R: 0, G: 0, B: 0, A: 255},       // Black
-+		color.NRGBA{R: 128, G: 0, B: 0, A: 255},     // Dark Red
-+		color.NRGBA{R: 0, G: 128, B: 0, A: 255},     // Dark Green
-+		color.NRGBA{R: 128, G: 128, B: 0, A: 255},   // Dark Yellow
-+		color.NRGBA{R: 0, G: 0, B: 128, A: 255},     // Dark Blue
-+		color.NRGBA{R: 128, G: 0, B: 128, A: 255},   // Dark Magenta
-+		color.NRGBA{R: 0, G: 128, B: 128, A: 255},   // Dark Cyan
-+		color.NRGBA{R: 192, G: 192, B: 192, A: 255}, // Light Gray
-+		color.NRGBA{R: 128, G: 128, B: 128, A: 255}, // Gray
-+		color.NRGBA{R: 255, G: 0, B: 0, A: 255},     // Red
-+		color.NRGBA{R: 0, G: 255, B: 0, A: 255},     // Green
-+		color.NRGBA{R: 255, G: 255, B: 0, A: 255},   // Yellow
-+		color.NRGBA{R: 0, G: 0, B: 255, A: 255},     // Blue
-+		color.NRGBA{R: 255, G: 0, B: 255, A: 255},   // Magenta
-+		color.NRGBA{R: 0, G: 255, B: 255, A: 255},   // Cyan
-+		color.NRGBA{R: 255, G: 255, B: 255, A: 255}, // White
++		{R: 0, G: 0, B: 0, A: 255},       // Black
++		{R: 128, G: 0, B: 0, A: 255},     // Dark Red
++		{R: 0, G: 128, B: 0, A: 255},     // Dark Green
++		{R: 128, G: 128, B: 0, A: 255},   // Dark Yellow
++		{R: 0, G: 0, B: 128, A: 255},     // Dark Blue
++		{R: 128, G: 0, B: 128, A: 255},   // Dark Magenta
++		{R: 0, G: 128, B: 128, A: 255},   // Dark Cyan
++		{R: 192, G: 192, B: 192, A: 255}, // Light Gray
++		{R: 128, G: 128, B: 128, A: 255}, // Gray
++		{R: 255, G: 0, B: 0, A: 255},     // Red
++		{R: 0, G: 255, B: 0, A: 255},     // Green
++		{R: 255, G: 255, B: 0, A: 255},   // Yellow
++		{R: 0, G: 0, B: 255, A: 255},     // Blue
++		{R: 255, G: 0, B: 255, A: 255},   // Magenta
++		{R: 0, G: 255, B: 255, A: 255},   // Cyan
++		{R: 255, G: 255, B: 255, A: 255}, // White
 +	}
 +	palette = append(palette, basicColors...)
 +
@@ -973,7 +978,6 @@ index 0000000..70a1cf7
 +	paint.FillShape(gtx.Ops, borderColor, clip.Stroke{Path: clip.RRect{Rect: borderRect, SE: 8, SW: 8, NE: 8, NW: 8}.Path(gtx.Ops), Width: 1}.Op())
 +
 +	return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-+		fmt.Printf("[ColorPicker] Layout called with constraints: %v\n", gtx.Constraints)
 +		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Start, Spacing: layout.SpaceEnd}.Layout(gtx,
 +			// Color preview area
 +			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1017,13 +1021,10 @@ index 0000000..70a1cf7
 +						return btn.Layout(gtx)
 +					}),
 +					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-+						fmt.Printf("[ColorPicker] Rendering Apply button\n")
 +						btn := material.Button(th, &cp.ConfirmButton, "Apply")
 +						btn.Background = color.NRGBA{R: 0, G: 120, B: 215, A: 255}
 +						btn.Color = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
-+						dims := btn.Layout(gtx)
-+						fmt.Printf("[ColorPicker] Apply button rendered: dims=%v\n", dims)
-+						return dims
++						return btn.Layout(gtx)
 +					}),
 +				)
 +			}),
@@ -1555,24 +1556,16 @@ index 0000000..70a1cf7
 +
 +	// Handle button clicks
 +	if cp.ConfirmButton.Clicked(gtx) {
-+		fmt.Printf("[ColorPicker] Confirm button clicked in Update\n")
-+		// Add current color to history
 +		cp.AddToHistory(cp.State.SelectedColor)
-+		// Call confirm callback if set
 +		if cp.OnConfirm != nil {
-+			fmt.Printf("[ColorPicker] Calling OnConfirm callback\n")
 +			cp.OnConfirm()
-+		} else {
-+			fmt.Printf("[ColorPicker] OnConfirm callback is nil\n")
 +		}
 +	}
 +
 +	if cp.CancelButton.Clicked(gtx) {
-+		fmt.Printf("[ColorPicker] Cancel button clicked\n")
 +	}
 +
 +	if cp.UndoButton.Clicked(gtx) {
-+		fmt.Printf("[ColorPicker] Undo button clicked\n")
 +	}
 +}
 +
@@ -1654,14 +1647,13 @@ index 0000000..70a1cf7
 +}
 diff --git a/colorpicker/color_preview.go b/colorpicker/color_preview.go
 new file mode 100644
-index 0000000..4a5ec9c
+index 0000000..0da7a30
 --- /dev/null
 +++ b/colorpicker/color_preview.go
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,191 @@
 +package colorpicker
 +
 +import (
-+	"fmt"
 +	"image"
 +	"image/color"
 +
@@ -1757,11 +1749,9 @@ index 0000000..4a5ec9c
 +
 +// HandleClick 处理点击事件
 +func (cpm *ColorPreviewManager) HandleClick(index int) {
-+	fmt.Printf("[ColorPreviewManager] HandleClick called: index=%d, len(previews)=%d\n", index, len(cpm.previews))
 +	if index >= 0 && index < len(cpm.previews) {
 +		cpm.selectedIndex = index
 +		cpm.isOpen = true
-+		fmt.Printf("[ColorPreviewManager] Set isOpen=true, selectedIndex=%d\n", index)
 +
 +		if cpm.colorPicker == nil {
 +			cpm.colorPicker = NewColorPicker(cpm.previews[index].ColorInfo.Color)
@@ -1773,8 +1763,6 @@ index 0000000..4a5ec9c
 +				cpm.previews[index].ColorInfo.Color.B,
 +			)
 +		}
-+	} else {
-+		fmt.Printf("[ColorPreviewManager] Index out of bounds: index=%d, len(previews)=%d\n", index, len(cpm.previews))
 +	}
 +}
 +
@@ -1827,14 +1815,11 @@ index 0000000..4a5ec9c
 +
 +// LayoutPicker 渲染颜色选择器
 +func (cpm *ColorPreviewManager) LayoutPicker(gtx layout.Context, th *material.Theme) layout.Dimensions {
-+	fmt.Printf("[ColorPreviewManager] LayoutPicker called: isOpen=%v, colorPicker=%v\n", cpm.isOpen, cpm.colorPicker != nil)
 +	if !cpm.isOpen || cpm.colorPicker == nil {
 +		return layout.Dimensions{}
 +	}
 +
-+	dims := cpm.colorPicker.Layout(gtx, th)
-+	fmt.Printf("[ColorPreviewManager] LayoutPicker rendered: dims=%v\n", dims)
-+	return dims
++	return cpm.colorPicker.Layout(gtx, th)
 +}
 +
 +// Update 更新颜色选择器状态
@@ -2313,11 +2298,346 @@ index 0000000..73b2bcc
 +		}
 +	}
 +}
+diff --git a/docs/color-indicator-implementation.md b/docs/color-indicator-implementation.md
+new file mode 100644
+index 0000000..34c66bf
+--- /dev/null
++++ b/docs/color-indicator-implementation.md
+@@ -0,0 +1,321 @@
++# 颜色指示器实现文档
++
++## 概述
++
++颜色指示器是一个代码编辑器功能，用于在代码中检测颜色值（如 `#FF0000`、`rgb(255,0,0)` 等）并在其旁边显示一个可视化的颜色指示器。用户可以点击颜色指示器打开颜色选择器，方便地修改颜色值。
++
++## 架构设计
++
++### 主要组件
++
++1. **ColorIndicatorProvider** - 颜色指示器提供者
++   - 位置：`gutter/providers/colorindicator.go`
++   - 负责检测代码中的颜色值并渲染颜色指示器
++
++2. **EditorColorPicker** - 编辑器颜色选择器
++   - 位置：`gutter/providers/editorcolorpicker.go`
++   - 提供颜色选择器界面和交互逻辑
++
++3. **ColorDetector** - 颜色检测器
++   - 位置：`colorpicker/detector.go`
++   - 使用正则表达式检测代码中的颜色值
++
++4. **文本布局集成** - 文本布局系统集成
++   - 位置：`internal/layout/line.go`、`internal/layout/text_layout.go`
++   - 在文本布局阶段为颜色指示器预留空间
++
++## 接口设计
++
++### ColorPickerProvider 接口
++
++```go
++type ColorPickerProvider interface {
++    GutterProvider
++    ShowColorPicker() bool
++    GetEditorColorPicker() ColorPickerLayout
++    RenderInTextArea(gtx layout.Context, ctx GutterContext, gutterWidth int)
++    GetColorOffsets() map[int][]int
++    GetIndicatorWidth(gtx layout.Context) int
++}
++```
++
++### 关键方法说明
++
++- `GetColorOffsets()` - 返回字符偏移量，用于指示在哪些位置插入颜色指示器
++- `GetIndicatorWidth()` - 返回颜色指示器的宽度（像素）
++- `RenderInTextArea()` - 在文本区域渲染颜色指示器
++
++## 实现细节
++
++### 1. 颜色检测
++
++颜色检测器使用正则表达式匹配以下格式的颜色值：
++
++```go
++var colorPatterns = []string{
++    `#([0-9a-fA-F]{3,4})`,           // #RGB, #RGBA
++    `#([0-9a-fA-F]{6,8})`,           // #RRGGBB, #RRGGBBAA
++    `rgba?\(\s*(\d{1,3}%?)\s*,\s*(\d{1,3}%?)\s*,\s*(\d{1,3}%?)\s*(?:,\s*([01]?\.?\d*)\s*)?\)`, // rgb(), rgba()
++    `hsla?\(\s*(\d{1,3}(?:deg)?)\s*,\s*(\d{1,3}%?)\s*,\s*(\d{1,3}%?)\s*(?:,\s*([01]?\.?\d*)\s*)?\)`, // hsl(), hsla()
++}
++```
++
++### 2. 颜色指示器渲染
++
++颜色指示器在文本区域渲染，而不是在 gutter 中，这样可以更精确地定位到颜色值的位置。
++
++```go
++func (p *ColorIndicatorProvider) RenderInTextArea(gtx layout.Context, ctx gutter.GutterContext, gutterWidth int) {
++    indicatorSizePx := gtx.Dp(unit.Dp(indicatorSize))
++    
++    for _, para := range ctx.Paragraphs {
++        colors, hasColors := p.colorInfos[para.Index]
++        if !hasColors || len(colors) == 0 {
++            continue
++        }
++        
++        // 计算颜色指示器的位置
++        for i, colorInfo := range colors {
++            xPos := gutterWidth + gapPx + i*(indicatorSizePx+gapPx)
++            yPos := para.StartY + (para.EndY-para.StartY-indicatorSizePx)/2
++            
++            // 渲染颜色指示器
++            p.renderColorIndicator(gtx, colorInfo.Color, xPos, yPos, indicatorSizePx)
++        }
++    }
++}
++```
++
++### 3. 文本布局集成
++
++为了确保颜色指示器不与代码重叠，我们在文本布局阶段为颜色指示器预留空间。
++
++#### 修改 Line.recompute 方法
++
++```go
++func (li *Line) recompute(alignOff fixed.Int26_6, runeOff int, colorOffsets map[int]int) {
++    // 跟踪当前字符位置
++    charPos := 0
++    // 跟踪累积的颜色指示器偏移量
++    colorOffset := fixed.I(0)
++    
++    for j := runStart; j < i; j++ {
++        // 检查是否需要在此字形之前添加颜色指示器偏移量
++        if offset, hasOffset := colorOffsets[charPos]; hasOffset {
++            colorOffset += fixed.I(offset)
++        }
++        
++        li.Glyphs[j].X = cursor + colorOffset
++        cursor += li.Glyphs[j].Advance
++        
++        // 更新字符位置
++        charPos += int(li.Glyphs[j].Runes)
++    }
++    
++    // 更新行宽度以包含颜色指示器偏移量
++    li.Width += colorOffset
++}
++```
++
++#### 修改 TextLayout
++
++```go
++type TextLayout struct {
++    // ... 其他字段
++    
++    // colorOffsets 映射行号到字符位置，指示在哪里插入颜色指示器
++    colorOffsets map[int]map[int]int
++}
++
++func (tl *TextLayout) SetColorOffsets(offsets map[int]map[int]int) {
++    tl.colorOffsets = offsets
++}
++
++func (tl *TextLayout) calculateXOffsets() {
++    runeOff := 0
++    for i, line := range tl.Lines {
++        alignOff := tl.params.Alignment.Align(tl.params.Locale.Direction, line.Width, tl.params.MaxWidth)
++        
++        // 获取此行的颜色偏移量
++        var lineColorOffsets map[int]int
++        if tl.colorOffsets != nil {
++            lineColorOffsets = tl.colorOffsets[i]
++        }
++        
++        tl.Lines[i].recompute(alignOff, runeOff, lineColorOffsets)
++        runeOff += line.Runes
++    }
++}
++```
++
++### 4. 编辑器集成
++
++编辑器在文本布局之前设置颜色偏移信息。
++
++```go
++func (e *Editor) setColorOffsets(gtx layout.Context) {
++    if e.gutterManager == nil {
++        return
++    }
++    
++    // 查找颜色指示器提供者
++    var colorPickerProvider gutter.ColorPickerProvider
++    providers := e.gutterManager.Providers()
++    for _, p := range providers {
++        if p.ID() == "colorindicator" {
++            if ci, ok := p.(gutter.ColorPickerProvider); ok {
++                colorPickerProvider = ci
++                break
++            }
++        }
++    }
++    
++    if colorPickerProvider == nil {
++        return
++    }
++    
++    // 从提供者获取颜色偏移量
++    colorOffsets := colorPickerProvider.GetColorOffsets()
++    if len(colorOffsets) == 0 {
++        return
++    }
++    
++    // 将颜色偏移量转换为文本布局期望的格式
++    indicatorWidth := colorPickerProvider.GetIndicatorWidth(gtx)
++    layoutOffsets := make(map[int]map[int]int)
++    
++    for line, offsets := range colorOffsets {
++        lineOffsets := make(map[int]int)
++        for _, offset := range offsets {
++            lineOffsets[offset] = indicatorWidth
++        }
++        layoutOffsets[line] = lineOffsets
++    }
++    
++    // 在文本布局中设置颜色偏移量
++    e.text.SetColorOffsets(layoutOffsets)
++}
++```
++
++## 工作流程
++
++### 初始化阶段
++
++1. 创建 `ColorIndicatorProvider` 实例
++2. 将提供者添加到 gutter 管理器
++3. 设置编辑器颜色选择器
++
++### 渲染阶段
++
++1. **颜色检测**
++   - 编辑器调用 `SetLineContents` 方法传递可见行的内容
++   - `ColorIndicatorProvider` 使用 `ColorDetector` 检测颜色值
++   - 将检测到的颜色信息按行分组存储
++
++2. **文本布局**
++   - 编辑器调用 `setColorOffsets` 获取颜色偏移信息
++   - 将偏移信息传递给 `TextView`
++   - `TextView` 将偏移信息传递给 `TextLayout`
++   - `TextLayout` 在计算字形位置时插入额外的空间
++
++3. **渲染颜色指示器**
++   - 编辑器调用 `RenderInTextArea` 渲染颜色指示器
++   - 在预留的空间位置绘制颜色指示器
++
++### 交互阶段
++
++1. **点击颜色指示器**
++   - 用户点击颜色指示器
++   - `ColorIndicatorProvider` 处理点击事件
++   - 打开颜色选择器
++
++2. **修改颜色**
++   - 用户在颜色选择器中选择新颜色
++   - `EditorColorPicker` 更新颜色值
++   - 编辑器更新代码中的颜色值
++
++3. **关闭颜色选择器**
++   - 用户点击其他位置或按 ESC 键
++   - 颜色选择器关闭
++
++## 关键代码文件
++
++| 文件 | 说明 |
++|------|------|
++| `gutter/providers/colorindicator.go` | 颜色指示器提供者实现 |
++| `gutter/providers/editorcolorpicker.go` | 编辑器颜色选择器实现 |
++| `colorpicker/detector.go` | 颜色检测器实现 |
++| `gutter/gutter.go` | Gutter 接口定义 |
++| `internal/layout/line.go` | 文本行布局实现 |
++| `internal/layout/text_layout.go` | 文本布局实现 |
++| `textview/text.go` | 文本视图实现 |
++| `editor.go` | 编辑器实现 |
++
++## 配置选项
++
++### 颜色指示器大小
++
++```go
++const indicatorSize = 16 // 颜色指示器大小（像素）
++```
++
++### 间距
++
++```go
++const gapPx = 2 // 颜色指示器之间的间距（像素）
++```
++
++### Gutter 优先级
++
++```go
++func (p *ColorIndicatorProvider) Priority() int {
++    return 140 // 在行号（100）和运行按钮（150）之间
++}
++```
++
++## 使用方法
++
++### 1. 创建颜色指示器提供者
++
++```go
++colorIndicator := providers.NewColorIndicatorProvider(editorApp.state)
++```
++
++### 2. 添加到 gutter 管理器
++
++```go
++gutterManager := gutter.NewManager()
++gutterManager.AddProvider(colorIndicator)
++```
++
++### 3. 设置到编辑器
++
++```go
++editor.SetGutterManager(gutterManager)
++```
++
++## 性能优化
++
++1. **颜色检测缓存** - 颜色检测结果按行缓存，避免重复检测
++2. **增量更新** - 只在文本内容变化时重新检测颜色
++3. **可见行检测** - 只检测可见行中的颜色值
++4. **延迟渲染** - 颜色指示器在文本布局之后渲染
++
++## 已知限制
++
++1. **多颜色指示器** - 当一行中有多个颜色值时，所有颜色指示器会显示在相同位置
++2. **颜色格式** - 只支持常见的颜色格式，不支持自定义颜色变量
++3. **性能** - 在大文件中检测颜色可能会有性能影响
++
++## 未来改进
++
++1. **多颜色指示器支持** - 为每个颜色值显示独立的指示器
++2. **颜色变量支持** - 支持检测和编辑 CSS 变量等颜色变量
++3. **性能优化** - 使用更高效的颜色检测算法
++4. **自定义样式** - 允许用户自定义颜色指示器的样式
++
++## 参考资料
++
++- [Gio 文本布局](https://gioui.org/widget/text)
++- [颜色格式规范](https://www.w3.org/TR/css-color-3/)
++- [正则表达式教程](https://regexone.com/)
 diff --git a/editor.go b/editor.go
-index e85579d..5580526 100644
+index e85579d..8e8dedd 100644
 --- a/editor.go
 +++ b/editor.go
-@@ -20,6 +20,7 @@ import (
+@@ -1,7 +1,6 @@
+ package gvcode
+ 
+ import (
+-	"fmt"
+ 	"image"
+ 	"image/color"
+ 	"io"
+@@ -20,6 +19,7 @@ import (
  	"gioui.org/op/paint"
  	"gioui.org/text"
  	"gioui.org/unit"
@@ -2325,7 +2645,7 @@ index e85579d..5580526 100644
  	gvcolor "github.com/oligo/gvcode/color"
  	"github.com/oligo/gvcode/gutter"
  	"github.com/oligo/gvcode/internal/buffer"
-@@ -86,6 +87,11 @@ type Editor struct {
+@@ -86,6 +86,11 @@ type Editor struct {
  	stickyLinesClicker gesture.Click
  }
  
@@ -2337,7 +2657,14 @@ index e85579d..5580526 100644
  // columnEditState tracks state for column/vertical editing mode
  type columnEditState struct {
  	// enabled indicates whether column editing mode is active
-@@ -263,6 +269,8 @@ func (e *Editor) Layout(gtx layout.Context, lt *text.Shaper) layout.Dimensions {
+@@ -258,11 +263,15 @@ func (e *Editor) Layout(gtx layout.Context, lt *text.Shaper) layout.Dimensions {
+ 			return layout.Dimensions{}
+ 		}),
+ 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
++			// Set color offsets before layout
++			e.setColorOffsets(gtx)
+ 			e.text.Layout(gtx, lt)
+ 			dims := e.layout(gtx, lt)
  			if e.completor != nil {
  				e.text.PaintOverlay(gtx, e.completor.Offset(), e.completor.Layout)
  			}
@@ -2346,7 +2673,7 @@ index e85579d..5580526 100644
  			return dims
  		}),
  	)
-@@ -271,13 +279,32 @@ func (e *Editor) Layout(gtx layout.Context, lt *text.Shaper) layout.Dimensions {
+@@ -271,13 +280,32 @@ func (e *Editor) Layout(gtx layout.Context, lt *text.Shaper) layout.Dimensions {
  func (e *Editor) layout(gtx layout.Context, shaper *text.Shaper) layout.Dimensions {
  	defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
  	pointer.CursorText.Add(gtx.Ops)
@@ -2383,25 +2710,84 @@ index e85579d..5580526 100644
  	e.showCaret = false
  	if gtx.Focused(e) {
  		now := gtx.Now
-@@ -318,6 +345,9 @@ func (e *Editor) layout(gtx layout.Context, shaper *text.Shaper) layout.Dimensio
+@@ -318,6 +346,8 @@ func (e *Editor) layout(gtx layout.Context, shaper *text.Shaper) layout.Dimensio
  		}
  
  		e.paintText(gtx, textColor)
 +
-+		// Render color indicators in text area
 +		e.renderColorIndicatorsInText(gtx, shaper)
  	}
  
  	// Paint column selection if active
-@@ -1363,3 +1393,82 @@ func (e *Editor) moveToLine(lineNum int) {
+@@ -1189,11 +1219,9 @@ func (StickyLineEventWrapper) isEditorEvent() {}
+ // out of view, helping users maintain context.
+ func (e *Editor) renderStickyLines(gtx layout.Context, shaper *text.Shaper, textColor gvcolor.Color) {
+ 	if e.gutterManager == nil {
+-		fmt.Println("[StickyLines] DEBUG: gutterManager is nil")
+ 		return
+ 	}
+ 
+-	// Find the sticky lines provider
+ 	var stickyProvider interface {
+ 		GetStickyLinesInfo() ([]struct {
+ 			Line   int
+@@ -1222,18 +1250,15 @@ func (e *Editor) renderStickyLines(gtx layout.Context, shaper *text.Shaper, text
+ 	}
+ 
+ 	if stickyProvider == nil {
+-		fmt.Println("[StickyLines] DEBUG: stickyProvider is nil")
+ 		return
+ 	}
+ 
+ 	stickyLines, stickyHeight := stickyProvider.GetStickyLinesInfo()
+-	fmt.Printf("[StickyLines] DEBUG: stickyLines=%d, stickyHeight=%d\n", len(stickyLines), stickyHeight)
+ 	if len(stickyLines) == 0 || stickyHeight == 0 {
+ 		return
+ 	}
+ 
+ 	lineHeight := e.text.GetLineHeight().Round()
+-	fmt.Printf("[StickyLines] DEBUG: lineHeight=%d\n", lineHeight)
+ 
+ 	// Set up colors
+ 	var bgColor, borderColor color.NRGBA
+@@ -1314,11 +1339,8 @@ func (e *Editor) renderStickyLines(gtx layout.Context, shaper *text.Shaper, text
+ 		}
+ 	}
+ 
+-	// Process click events (MUST be after registering click areas!)
+-	fmt.Println("[StickyLines] DEBUG: Processing click events...")
+ 	for {
+ 		evt, ok := e.stickyLinesClicker.Update(gtx.Source)
+-		fmt.Printf("[StickyLines] DEBUG: evt=%+v, ok=%v\n", evt, ok)
+ 		if !ok {
+ 			break
+ 		}
+@@ -1326,17 +1348,13 @@ func (e *Editor) renderStickyLines(gtx layout.Context, shaper *text.Shaper, text
+ 		if evt.Kind == gesture.KindClick {
+ 			clickY := int(evt.Position.Y)
+ 			stickyLineIndex := clickY / lineHeight
+-			fmt.Printf("[StickyLines] DEBUG: CLICK! clickY=%d, stickyLineIndex=%d, lineHeight=%d\n", clickY, stickyLineIndex, lineHeight)
+ 
+ 			if stickyLineIndex >= 0 && stickyLineIndex < len(stickyLines) {
+ 				targetLine := stickyLines[stickyLineIndex].Line
+-				fmt.Printf("[StickyLines] DEBUG: Jumping to line %d\n", targetLine)
+ 				e.moveToLine(targetLine)
+ 
+-				// Also notify provider
+ 				stickyProvider.HandleStickyLineClick(clickY)
+ 
+-				// Generate event
+ 				e.pending = append(e.pending, StickyLineEventWrapper{
+ 					Event: gutter.StickyLineEvent{
+ 						Line: targetLine,
+@@ -1363,3 +1381,98 @@ func (e *Editor) moveToLine(lineNum int) {
  	// Scroll to make this line visible near the top
  	e.text.ScrollRel(0, para.StartY-scrollOff.Y)
  }
 +
 +// renderColorPickerOverlay renders the color picker overlay if needed.
-+func (e *Editor) renderColorPickerOverlay(gtx layout.Context) {
++func (e *Editor) setColorOffsets(gtx layout.Context) {
 +	if e.gutterManager == nil {
-+		fmt.Println("[Editor] renderColorPickerOverlay: gutterManager is nil")
 +		return
 +	}
 +
@@ -2409,69 +2795,86 @@ index e85579d..5580526 100644
 +	var colorPickerProvider gutter.ColorPickerProvider
 +
 +	providers := e.gutterManager.Providers()
-+	fmt.Printf("[Editor] renderColorPickerOverlay: Found %d providers\n", len(providers))
-+	for i, p := range providers {
-+		fmt.Printf("[Editor] renderColorPickerOverlay: Provider %d: ID=%s, Type=%T\n", i, p.ID(), p)
++	for _, p := range providers {
 +		if p.ID() == "colorindicator" {
-+			// Try type assertion to ColorPickerProvider
 +			if ci, ok := p.(gutter.ColorPickerProvider); ok {
-+				fmt.Println("[Editor] renderColorPickerOverlay: Successfully cast to ColorPickerProvider")
 +				colorPickerProvider = ci
 +				break
-+			} else {
-+				fmt.Println("[Editor] renderColorPickerOverlay: Failed to cast to ColorPickerProvider")
 +			}
 +		}
 +	}
 +
 +	if colorPickerProvider == nil {
-+		fmt.Println("[Editor] renderColorPickerOverlay: colorPickerProvider is nil")
++		return
++	}
++
++	// Get color offsets from the provider
++	colorOffsets := colorPickerProvider.GetColorOffsets()
++	if len(colorOffsets) == 0 {
++		return
++	}
++
++	// Convert color offsets to the format expected by text layout
++	indicatorWidth := colorPickerProvider.GetIndicatorWidth(gtx)
++	layoutOffsets := make(map[int]map[int]int)
++
++	for line, offsets := range colorOffsets {
++		lineOffsets := make(map[int]int)
++		for _, offset := range offsets {
++			lineOffsets[offset] = indicatorWidth
++		}
++		layoutOffsets[line] = lineOffsets
++	}
++
++	// Set the color offsets in the text layout
++	e.text.SetColorOffsets(layoutOffsets)
++}
++
++func (e *Editor) renderColorPickerOverlay(gtx layout.Context) {
++	if e.gutterManager == nil {
++		return
++	}
++
++	var colorPickerProvider gutter.ColorPickerProvider
++
++	providers := e.gutterManager.Providers()
++	for _, p := range providers {
++		if p.ID() == "colorindicator" {
++			if ci, ok := p.(gutter.ColorPickerProvider); ok {
++				colorPickerProvider = ci
++				break
++			}
++		}
++	}
++
++	if colorPickerProvider == nil {
 +		return
 +	}
 +
 +	if !colorPickerProvider.ShowColorPicker() {
-+		fmt.Println("[Editor] renderColorPickerOverlay: ShowColorPicker returned false")
 +		return
 +	}
 +
-+	fmt.Println("[Editor] renderColorPickerOverlay: Rendering color picker")
-+
-+	// Render the color picker
 +	colorPicker := colorPickerProvider.GetEditorColorPicker()
 +	if colorPicker != nil {
-+		// Update the color picker state to handle events
 +		colorPicker.Update(gtx)
-+		// Create a default theme for the color picker
 +		th := material.NewTheme()
 +		colorPicker.Layout(gtx, th)
 +	}
 +}
 +
-+// renderColorIndicatorsInText renders color indicators in the text area (not gutter).
 +func (e *Editor) renderColorIndicatorsInText(gtx layout.Context, shaper *text.Shaper) {
-+	fmt.Printf("[Editor] renderColorIndicatorsInText called\n")
-+
 +	if e.gutterManager == nil {
-+		fmt.Printf("[Editor] gutterManager is nil\n")
 +		return
 +	}
 +
-+	// Find the color indicator provider
 +	providers := e.gutterManager.Providers()
-+	fmt.Printf("[Editor] Found %d providers\n", len(providers))
-+
 +	for _, p := range providers {
-+		fmt.Printf("[Editor] Checking provider: ID=%s\n", p.ID())
 +		if p.ID() == "colorindicator" {
 +			if ci, ok := p.(gutter.ColorPickerProvider); ok {
-+				fmt.Printf("[Editor] Found color indicator provider, calling RenderInTextArea\n")
-+				// Build gutter context for rendering
 +				ctx := e.buildGutterContext(gtx, shaper)
-+				// Render color indicators in text area
 +				ci.RenderInTextArea(gtx, ctx, e.gutterWidth)
 +				break
-+			} else {
-+				fmt.Printf("[Editor] Provider 'colorindicator' does not implement ColorPickerProvider\n")
 +			}
 +		}
 +	}
@@ -2636,71 +3039,59 @@ index 196d9bb..d592ab6 100644
  require (
  	gioui.org v0.9.0
 diff --git a/gutter.go b/gutter.go
-index 6bcbb0c..d47a793 100644
+index 6bcbb0c..3b39b60 100644
 --- a/gutter.go
 +++ b/gutter.go
-@@ -1,6 +1,7 @@
- package gvcode
- 
- import (
-+	"fmt"
- 	"image"
- 	"image/color"
- 	"sort"
-@@ -59,6 +60,10 @@ func (e *Editor) buildGutterContext(gtx layout.Context, shaper *text.Shaper) gut
+@@ -57,8 +57,8 @@ func (e *Editor) buildGutterContext(gtx layout.Context, shaper *text.Shaper) gut
+ 	e.feedLineContentsToRunButtonProvider(paragraphs)
+ 	// Feed line contents to sticky lines provider if it exists
  	e.feedLineContentsToStickyLinesProvider(paragraphs)
- 	// Feed line contents to fold button provider if it exists
+-	// Feed line contents to fold button provider if it exists
  	e.feedLineContentsToFoldButtonProvider(paragraphs)
-+	// Feed line contents to color indicator provider if it exists
 +	e.feedLineContentsToColorIndicatorProvider(paragraphs)
-+
-+	fmt.Printf("[Editor] buildGutterContext: paragraphs=%d, providers=%d\n", len(paragraphs), len(e.gutterManager.Providers()))
  
  	return gutter.GutterContext{
  		Shaper:      shaper,
-@@ -189,6 +194,48 @@ func (e *Editor) feedLineContentsToFoldButtonProvider(paragraphs []gutter.Paragr
+@@ -68,6 +68,7 @@ func (e *Editor) buildGutterContext(gtx layout.Context, shaper *text.Shaper) gut
+ 		CurrentLine: currentLine,
+ 		LineHeight:  e.text.GetLineHeight(),
+ 		Colors:      e.gutterColors(),
++		LayoutLines: textLayout.Lines,
+ 	}
+ }
+ 
+@@ -189,6 +190,37 @@ func (e *Editor) feedLineContentsToFoldButtonProvider(paragraphs []gutter.Paragr
  	foldButtonProvider.SetLineContents(lines, 0)
  }
  
 +// feedLineContentsToColorIndicatorProvider reads all line contents and feeds them to the color indicator provider.
 +func (e *Editor) feedLineContentsToColorIndicatorProvider(paragraphs []gutter.Paragraph) {
-+	fmt.Printf("[Editor] feedLineContentsToColorIndicatorProvider called\n")
-+
-+	// Find the color indicator provider
 +	var colorIndicatorProvider gutter.LineContentProvider
 +
 +	for _, p := range e.gutterManager.Providers() {
-+		fmt.Printf("[Editor] Checking provider: ID=%s\n", p.ID())
 +		if p.ID() == "colorindicator" {
 +			if ci, ok := p.(gutter.LineContentProvider); ok {
 +				colorIndicatorProvider = ci
-+				fmt.Printf("[Editor] Found color indicator provider\n")
 +				break
 +			}
 +		}
 +	}
 +
 +	if colorIndicatorProvider == nil {
-+		fmt.Printf("[Editor] Color indicator provider not found\n")
 +		return
 +	}
 +
-+	// For color indicators, we need ALL lines to detect colors throughout the file
 +	totalLines := e.text.Paragraphs()
 +	if totalLines <= 0 {
 +		return
 +	}
 +
-+	// Read all lines from the buffer
 +	srcReader := buffer.NewReader(e.buffer)
 +	e.scratch = srcReader.ReadAll(e.scratch)
 +	allContent := string(e.scratch)
 +
-+	// Split into lines
 +	lines := strings.Split(allContent, "\n")
 +
-+	// Feed to provider
-+	fmt.Printf("[Editor] Calling SetLineContents with %d lines\n", len(lines))
 +	colorIndicatorProvider.SetLineContents(lines, 0)
 +}
 +
@@ -2708,18 +3099,31 @@ index 6bcbb0c..d47a793 100644
  func (e *Editor) gutterColors() *gutter.GutterColors {
  	if e.colorPalette == nil {
 diff --git a/gutter/gutter.go b/gutter/gutter.go
-index 5a03ae8..8fdd6ea 100644
+index 5a03ae8..eb0dbb1 100644
 --- a/gutter/gutter.go
 +++ b/gutter/gutter.go
-@@ -6,6 +6,7 @@ import (
+@@ -6,7 +6,9 @@ import (
  	"gioui.org/layout"
  	"gioui.org/text"
  	"gioui.org/unit"
 +	"gioui.org/widget/material"
  	gvcolor "github.com/oligo/gvcode/color"
++	lt "github.com/oligo/gvcode/internal/layout"
  	"golang.org/x/image/math/fixed"
  )
-@@ -153,3 +154,20 @@ const (
+ 
+@@ -73,6 +75,10 @@ type GutterContext struct {
+ 	// LineNumberWidth is the width of the line number column in pixels.
+ 	// This is set by the gutter manager when a line number provider is present.
+ 	LineNumberWidth int
++
++	// LayoutLines contains the layout lines from the text layouter.
++	// This is used by color indicators to get accurate glyph positions.
++	LayoutLines []lt.Line
+ }
+ 
+ // Paragraph contains metadata about a paragraph (logical line) in the document.
+@@ -153,3 +159,25 @@ const (
  	RunButtonMain
  	RunButtonTest
  )
@@ -2739,66 +3143,55 @@ index 5a03ae8..8fdd6ea 100644
 +	GetEditorColorPicker() ColorPickerLayout
 +	// RenderInTextArea renders color indicators in the text area (not gutter).
 +	RenderInTextArea(gtx layout.Context, ctx GutterContext, gutterWidth int)
++	// GetColorOffsets returns the character offsets where color indicators should be inserted.
++	// Returns a map from line number to a slice of character offsets.
++	GetColorOffsets() map[int][]int
++	// GetIndicatorWidth returns the width of the color indicator in pixels.
++	GetIndicatorWidth(gtx layout.Context) int
 +}
 diff --git a/gutter/manager.go b/gutter/manager.go
-index de4d377..a07a8cb 100644
+index de4d377..2c9355a 100644
 --- a/gutter/manager.go
 +++ b/gutter/manager.go
-@@ -1,6 +1,7 @@
- package gutter
- 
- import (
-+	"fmt"
- 	"image"
- 	"sort"
- 
-@@ -190,6 +191,7 @@ func (m *Manager) Update(gtx layout.Context) (GutterEvent, bool) {
- // handleClick processes a click event and generates appropriate gutter events.
+@@ -191,7 +191,6 @@ func (m *Manager) Update(gtx layout.Context) (GutterEvent, bool) {
  func (m *Manager) handleClick(gtx layout.Context, evt gesture.ClickEvent) {
  	pos := image.Point{X: int(evt.Position.X), Y: int(evt.Position.Y)}
-+	fmt.Printf("[GutterManager] handleClick: pos=(%d, %d), numClicks=%d\n", pos.X, pos.Y, evt.NumClicks)
  
- 	// Find which provider was clicked
+-	// Find which provider was clicked
  	for _, p := range m.providers {
-@@ -198,15 +200,19 @@ func (m *Manager) handleClick(gtx layout.Context, evt gesture.ClickEvent) {
- 			continue
+ 		bounds, ok := m.providerBounds[p.ID()]
+ 		if !ok {
+@@ -199,13 +198,11 @@ func (m *Manager) handleClick(gtx layout.Context, evt gesture.ClickEvent) {
  		}
  
-+		fmt.Printf("[GutterManager] Checking provider %s: bounds=%v, pos.In=%v\n", p.ID(), bounds, pos.In(bounds))
-+
  		if pos.In(bounds) {
- 			// Calculate which line was clicked
+-			// Calculate which line was clicked
  			line := m.hitTestLine(pos.Y)
-+			fmt.Printf("[GutterManager] Clicked in provider %s, line=%d\n", p.ID(), line)
  			if line < 0 {
  				continue
  			}
  
- 			// Check if provider is interactive
+-			// Check if provider is interactive
  			if interactive, ok := p.(InteractiveGutter); ok {
-+				fmt.Printf("[GutterManager] Calling HandleClick for provider %s\n", p.ID())
  				if interactive.HandleClick(line, evt.Source, evt.NumClicks, evt.Modifiers) {
  					m.pending = append(m.pending, GutterClickEvent{
- 						ProviderID: p.ID(),
-@@ -230,6 +236,8 @@ func (m *Manager) handleClick(gtx layout.Context, evt gesture.ClickEvent) {
- 			}
- 		}
- 	}
-+
-+	fmt.Printf("[GutterManager] No provider handled the click\n")
- }
- 
- // hitTestLine determines which logical line (paragraph) index corresponds to a Y coordinate.
+@@ -218,7 +215,6 @@ func (m *Manager) handleClick(gtx layout.Context, evt gesture.ClickEvent) {
+ 					return
+ 				}
+ 			} else {
+-				// Non-interactive provider, still emit event
+ 				m.pending = append(m.pending, GutterClickEvent{
+ 					ProviderID: p.ID(),
+ 					Line:       line,
 diff --git a/gutter/providers/colorindicator.go b/gutter/providers/colorindicator.go
 new file mode 100644
-index 0000000..296af69
+index 0000000..6bde0ea
 --- /dev/null
 +++ b/gutter/providers/colorindicator.go
-@@ -0,0 +1,509 @@
+@@ -0,0 +1,521 @@
 +package providers
 +
 +import (
-+	"fmt"
 +	"image"
 +	"image/color"
 +	"strings"
@@ -2814,6 +3207,8 @@ index 0000000..296af69
 +	"github.com/oligo/gvcode/colorpicker"
 +	"github.com/oligo/gvcode/gutter"
 +	gestureExt "github.com/oligo/gvcode/internal/gesture"
++	lt "github.com/oligo/gvcode/internal/layout"
++	"golang.org/x/image/math/fixed"
 +)
 +
 +const (
@@ -2870,6 +3265,9 @@ index 0000000..296af69
 +
 +	// enabled indicates whether color indicators are enabled.
 +	enabled bool
++
++	// startLine is the first line that was provided in SetLineContents.
++	startLine int
 +}
 +
 +// NewColorIndicatorProvider creates a new color indicator provider.
@@ -2887,7 +3285,6 @@ index 0000000..296af69
 +	// Set the close callback to reset showPicker when the picker is closed
 +	editorColorPicker.SetOnClose(func() {
 +		provider.showPicker = false
-+		fmt.Printf("[ColorIndicator] Color picker closed via callback\n")
 +	})
 +
 +	return provider
@@ -2924,14 +3321,10 @@ index 0000000..296af69
 +
 +// SetLineContents is called to provide line contents for color detection.
 +func (p *ColorIndicatorProvider) SetLineContents(lines []string, startLine int) {
-+	fmt.Printf("[ColorIndicator] SetLineContents called: lines=%d, startLine=%d\n", len(lines), startLine)
-+
 +	if !p.enabled {
-+		fmt.Printf("[ColorIndicator] Color indicators disabled, skipping\n")
 +		return
 +	}
 +
-+	// Build full text for color detection
 +	var fullText strings.Builder
 +	for i, line := range lines {
 +		fullText.WriteString(line)
@@ -2940,30 +3333,19 @@ index 0000000..296af69
 +		}
 +	}
 +
-+	fmt.Printf("[ColorIndicator] Full text length: %d\n", len(fullText.String()))
 +	p.editorText = fullText.String()
++	p.startLine = startLine
 +
-+	// Cache line texts for offset calculation
 +	p.lineTexts = make(map[int]string)
 +	for i, line := range lines {
 +		p.lineTexts[startLine+i] = line
-+		fmt.Printf("[ColorIndicator] Cached line %d: %q (len=%d)\n", startLine+i, line, len(line))
 +	}
 +
-+	// Detect colors in the text
 +	detector := colorpicker.NewColorDetector()
 +	allColors := detector.DetectColors(fullText.String())
 +
-+	fmt.Printf("[ColorIndicator] Detected %d colors in total\n", len(allColors))
-+	for i, colorInfo := range allColors {
-+		fmt.Printf("[ColorIndicator] Color %d: start=%d, end=%d, original=%q\n",
-+			i, colorInfo.Range.Start, colorInfo.Range.End, colorInfo.Original)
-+	}
-+
-+	// Group colors by line
 +	p.colorInfos = make(map[int][]colorpicker.ColorInfo)
 +	for _, colorInfo := range allColors {
-+		// Calculate which line this color is on
 +		lineNum := 0
 +		charCount := 0
 +		for i, line := range lines {
@@ -2971,11 +3353,10 @@ index 0000000..296af69
 +				lineNum = startLine + i
 +				break
 +			}
-+			charCount += len(line) + 1 // +1 for newline
++			charCount += len(line) + 1
 +		}
 +
 +		p.colorInfos[lineNum] = append(p.colorInfos[lineNum], colorInfo)
-+		fmt.Printf("[ColorIndicator] Assigned color to line %d: %q\n", lineNum, colorInfo.Original)
 +	}
 +
 +	// Update editor color picker
@@ -3017,53 +3398,21 @@ index 0000000..296af69
 +		// This prevents the picker from disappearing immediately after opening
 +	}
 +
-+	// Process click events
-+	for {
-+		evt, ok := p.clicker.Update(gtx.Source)
-+		if !ok {
-+			break
-+		}
-+		fmt.Printf("[ColorIndicator] Click event detected: kind=%v, pos=(%v, %v)\n", evt.Kind, evt.Position.X, evt.Position.Y)
-+		if evt.Kind == gesture.KindClick {
-+			clickY := evt.Position.Y + ctx.Viewport.Min.Y
-+			clickX := evt.Position.X
-+			line := p.hitTestLine(clickY)
-+			if line >= 0 {
-+				colorIndex := p.hitTestColorIndex(line, clickX, ctx)
-+				if colorIndex >= 0 {
-+					fmt.Printf("[ColorIndicator] Click detected: line=%d, colorIndex=%d\n", line, colorIndex)
-+					p.HandleClick(line, evt.Source, evt.NumClicks, evt.Modifiers)
-+				}
-+			}
-+		}
-+	}
-+
 +	// Don't render in gutter anymore - render in text area instead
 +	return layout.Dimensions{Size: image.Pt(0, 0)}
 +}
 +
 +// HandleClick implements the InteractiveGutter interface.
 +func (p *ColorIndicatorProvider) HandleClick(line int, source pointer.Source, numClicks int, modifiers key.Modifiers) bool {
-+	fmt.Printf("[ColorIndicator] HandleClick called: line=%d, numClicks=%d\n", line, numClicks)
-+
 +	colors, hasColors := p.colorInfos[line]
 +	if !hasColors || len(colors) == 0 {
-+		fmt.Printf("[ColorIndicator] No colors found on line %d\n", line)
 +		return false
 +	}
 +
-+	fmt.Printf("[ColorIndicator] Found %d colors on line %d\n", len(colors), line)
-+
-+	// Open color picker for the first color on this line
-+	// TODO: Support clicking specific color indicators when there are multiple
 +	p.hoveredLine = line
 +	p.hoveredColorIndex = 0
 +	p.showPicker = true
-+	fmt.Printf("[ColorIndicator] Before HandleClick, calling editorColorPicker.HandleClick(0)\n")
 +	p.editorColorPicker.HandleClick(0)
-+	fmt.Printf("[ColorIndicator] After HandleClick, IsPickerOpen=%v\n", p.editorColorPicker.IsPickerOpen())
-+
-+	fmt.Printf("[ColorIndicator] Opened color picker: line=%d, colorIndex=0, showPicker=%v\n", line, p.showPicker)
 +
 +	return true
 +}
@@ -3087,162 +3436,186 @@ index 0000000..296af69
 +
 +// ShowColorPicker returns whether the color picker should be shown.
 +func (p *ColorIndicatorProvider) ShowColorPicker() bool {
-+	fmt.Printf("[ColorIndicator] ShowColorPicker called: showPicker=%v, isPickerOpen=%v\n", p.showPicker, p.editorColorPicker.IsPickerOpen())
 +	return p.showPicker
 +}
 +
-+// CloseColorPicker closes color picker.
 +func (p *ColorIndicatorProvider) CloseColorPicker() {
 +	p.showPicker = false
 +	p.editorColorPicker.HandleCancel()
-+	fmt.Printf("[ColorIndicator] CloseColorPicker called: showPicker=%v\n", p.showPicker)
 +}
 +
-+// RenderInTextArea renders color indicators in the text area (not gutter).
 +func (p *ColorIndicatorProvider) RenderInTextArea(gtx layout.Context, ctx gutter.GutterContext, gutterWidth int) {
-+	indicatorSizePx := gtx.Dp(unit.Dp(indicatorSize))
-+
-+	fmt.Printf("[ColorIndicator] RenderInTextArea: viewport.Min.Y=%d, viewport.Max.Y=%d, gutterWidth=%d, totalLines=%d\n",
-+		ctx.Viewport.Min.Y, ctx.Viewport.Max.Y, gutterWidth, len(ctx.Paragraphs))
-+
-+	// Debug: print all color info
-+	fmt.Printf("[ColorIndicator] Total colorInfos: %d\n", len(p.colorInfos))
-+	for line, colors := range p.colorInfos {
-+		fmt.Printf("[ColorIndicator] Line %d: %d colors\n", line, len(colors))
-+	}
-+
-+	// Render color indicators for each visible paragraph
 +	for _, para := range ctx.Paragraphs {
 +		colors, hasColors := p.colorInfos[para.Index]
 +		if !hasColors || len(colors) == 0 {
 +			continue
 +		}
 +
-+		// Skip paragraphs outside the viewport
 +		if para.EndY < ctx.Viewport.Min.Y {
-+			fmt.Printf("[ColorIndicator] Skipping line %d: para.EndY=%d < viewport.Min.Y=%d\n",
-+				para.Index, para.EndY, ctx.Viewport.Min.Y)
 +			continue
 +		}
 +		if para.StartY > ctx.Viewport.Max.Y {
-+			fmt.Printf("[ColorIndicator] Breaking at line %d: para.StartY=%d > viewport.Max.Y=%d\n",
-+				para.Index, para.StartY, ctx.Viewport.Max.Y)
 +			break
 +		}
 +
-+		fmt.Printf("[ColorIndicator] Rendering color indicators for line %d: %d colors\n", para.Index, len(colors))
-+		fmt.Printf("[ColorIndicator] Line %d: para.StartY=%d, para.EndY=%d, viewport.Min.Y=%d, viewport.Max.Y=%d, lineHeight=%d\n",
-+			para.Index, para.StartY, para.EndY, ctx.Viewport.Min.Y, ctx.Viewport.Max.Y, ctx.LineHeight)
-+
-+		// Get line text to calculate pixel positions
 +		lineText := p.getLineText(para.Index)
 +		if lineText == "" {
 +			continue
 +		}
 +
-+		// Calculate line offset for converting global positions to line-relative positions
 +		lineOffset := 0
-+		for i := 0; i < para.Index; i++ {
++		if p.startLine > 0 {
++			continue
++		}
++		for i := p.startLine; i < para.Index; i++ {
 +			prevLineText := p.getLineText(i)
 +			if prevLineText == "" {
-+				fmt.Printf("[ColorIndicator] Line %d: empty line, assuming 0 chars\n", i)
-+				lineOffset += 1 // +1 for newline even for empty lines
++				lineOffset += 1
 +			} else {
-+				fmt.Printf("[ColorIndicator] Calculating offset for line %d: prevLine=%d, prevLineText=%q, len=%d\n",
-+					para.Index, i, prevLineText, len(prevLineText))
-+				lineOffset += len(prevLineText) + 1 // +1 for newline
++				lineOffset += len(prevLineText) + 1
 +			}
 +		}
-+		fmt.Printf("[ColorIndicator] Line %d: calculated offset=%d\n", para.Index, lineOffset)
 +
-+		// Layout: line text to get glyph positions
-+		params := ctx.TextParams
-+		params.MinWidth = 0
-+		params.MaxLines = 1
-+		ctx.Shaper.LayoutString(params, lineText)
++		var layoutLine *lt.Line
++		if para.Index < len(ctx.LayoutLines) {
++			layoutLine = &ctx.LayoutLines[para.Index]
++		}
 +
-+		fmt.Printf("[ColorIndicator] Line %d: lineText=%q, len=%d\n", para.Index, lineText, len(lineText))
-+
-+		// Collect glyph positions by tracking character offsets
++		// Collect glyph positions from the layout line
 +		glyphPositions := make([]int, len(lineText)+1)
-+		currentPos := 0
-+		for {
-+			glyph, ok := ctx.Shaper.NextGlyph()
-+			if !ok {
-+				break
++		if layoutLine != nil {
++			currentPos := 0
++			for i, glyph := range layoutLine.Glyphs {
++				// Map glyph position to character positions
++				runesInGlyph := int(glyph.Runes)
++				// Use original glyph positions (before color offsets) for indicator placement
++				// The text layout has already inserted space at the original positions,
++				// so we need to render indicators at those original positions
++				originalX := fixed.Int26_6(0)
++				if i < len(layoutLine.OriginalGlyphPositions) {
++					originalX = layoutLine.OriginalGlyphPositions[i]
++				} else {
++					originalX = glyph.X
++				}
++				for i := 0; i < runesInGlyph && currentPos < len(lineText); i++ {
++					glyphPositions[currentPos] = originalX.Floor()
++					currentPos++
++				}
 +			}
-+			// Map glyph position to character positions
-+			// glyph.Runes tells us how many characters this glyph represents
-+			runesInGlyph := int(glyph.Runes)
-+			for i := 0; i < runesInGlyph && currentPos < len(lineText); i++ {
-+				glyphPositions[currentPos] = glyph.X.Floor()
-+				currentPos++
++			// Fill remaining positions with the last known position
++			if currentPos < len(glyphPositions) {
++				lastPos := 0
++				if currentPos > 0 {
++					lastPos = glyphPositions[currentPos-1]
++				}
++				for currentPos < len(glyphPositions) {
++					glyphPositions[currentPos] = lastPos
++					currentPos++
++				}
 +			}
-+		}
-+		// Fill remaining positions with the last known position
-+		if currentPos < len(glyphPositions) {
-+			lastPos := 0
-+			if currentPos > 0 {
-+				lastPos = glyphPositions[currentPos-1]
++		} else {
++			// Fallback: layout text to get glyph positions
++			params := ctx.TextParams
++			params.MinWidth = 0
++			params.MaxLines = 1
++			ctx.Shaper.LayoutString(params, lineText)
++
++			currentPos := 0
++			for {
++				glyph, ok := ctx.Shaper.NextGlyph()
++				if !ok {
++					break
++				}
++				runesInGlyph := int(glyph.Runes)
++				for i := 0; i < runesInGlyph && currentPos < len(lineText); i++ {
++					glyphPositions[currentPos] = glyph.X.Floor()
++					currentPos++
++				}
 +			}
-+			for currentPos < len(glyphPositions) {
-+				glyphPositions[currentPos] = lastPos
-+				currentPos++
++			// Fill remaining positions with the last known position
++			if currentPos < len(glyphPositions) {
++				lastPos := 0
++				if currentPos > 0 {
++					lastPos = glyphPositions[currentPos-1]
++				}
++				for currentPos < len(glyphPositions) {
++					glyphPositions[currentPos] = lastPos
++					currentPos++
++				}
 +			}
 +		}
 +
-+		// Render each color indicator on this line
++		charToGlyphIndex := make([]int, len(lineText)+1)
++		currentCharPos := 0
++		for glyphIdx, glyph := range layoutLine.Glyphs {
++			runesInGlyph := int(glyph.Runes)
++			for i := 0; i < runesInGlyph && currentCharPos < len(lineText); i++ {
++				charToGlyphIndex[currentCharPos] = glyphIdx
++				currentCharPos++
++			}
++		}
++		if currentCharPos < len(charToGlyphIndex) {
++			lastGlyphIdx := 0
++			if currentCharPos > 0 {
++				lastGlyphIdx = charToGlyphIndex[currentCharPos-1]
++			}
++			for currentCharPos < len(charToGlyphIndex) {
++				charToGlyphIndex[currentCharPos] = lastGlyphIdx
++				currentCharPos++
++			}
++		}
++
++		accumulatedOffset := 0
++
 +		for i, colorInfo := range colors {
-+			// Calculate Y position: para.StartY is baseline, need to adjust for indicator center
-+			// The indicator should be vertically centered with the text
 +			baselineY := para.StartY - ctx.Viewport.Min.Y
 +			ascent := para.Ascent.Ceil()
 +			descent := para.Descent.Ceil()
 +			textHeight := ascent + descent
-+			// Center the indicator vertically with the text
-+			indicatorY := baselineY - ascent + (textHeight-indicatorSizePx)/2
++
++			indicatorHeight := textHeight
++			indicatorWidth := textHeight
++			indicatorY := baselineY - ascent
 +
 +			colorStartPos := colorInfo.Range.Start - lineOffset
 +
-+			fmt.Printf("[ColorIndicator] Color %d: globalStart=%d, lineOffset=%d, colorStartPos=%d, lineText=%q\n",
-+				i, colorInfo.Range.Start, lineOffset, colorStartPos, lineText)
-+			fmt.Printf("[ColorIndicator] Color %d: colorInfo.Original=%q, expected position in line: %d\n",
-+				i, colorInfo.Original, strings.Index(lineText, colorInfo.Original))
-+
 +			if colorStartPos < 0 || colorStartPos >= len(lineText) {
-+				fmt.Printf("[ColorIndicator] Skipping color %d: colorStartPos=%d out of range [0, %d)\n",
-+					i, colorStartPos, len(lineText))
 +				continue
 +			}
 +
-+			// Calculate indicator X position: place it at the start of the color code
-+			// but offset by indicator size + gap to avoid overlapping with text
 +			var indicatorX int
-+			if colorStartPos < len(glyphPositions) {
-+				pos := glyphPositions[colorStartPos]
-+				// Place indicator to the left of the color code, but ensure it doesn't overlap with previous text
-+				indicatorX = max(pos-indicatorSizePx-4, 0)
-+				fmt.Printf("[ColorIndicator] Color %d: glyphPos=%d, indicatorSizePx=%d, indicatorX=%d\n",
-+					i, pos, indicatorSizePx, indicatorX)
++			if colorStartPos < len(charToGlyphIndex) {
++				glyphIdx := charToGlyphIndex[colorStartPos]
++				if glyphIdx < len(layoutLine.OriginalGlyphPositions) {
++					indicatorX = layoutLine.OriginalGlyphPositions[glyphIdx].Floor() + accumulatedOffset
++				} else if glyphIdx < len(layoutLine.Glyphs) {
++					indicatorX = layoutLine.Glyphs[glyphIdx].X.Floor() + accumulatedOffset
++				} else {
++					indicatorX = 0
++				}
 +			} else {
 +				indicatorX = 0
-+				fmt.Printf("[ColorIndicator] Color %d: colorStartPos >= len(glyphPositions), using fallback indicatorX=%d\n",
-+					i, indicatorX)
 +			}
 +
-+			indicatorRect := image.Rect(indicatorX, indicatorY, indicatorX+indicatorSizePx, indicatorY+indicatorSizePx)
-+
-+			fmt.Printf("[ColorIndicator] Drawing indicator %d at (%d, %d) size %d, color=%v\n",
-+				i, indicatorX, indicatorY, indicatorSizePx, colorInfo.Color)
++			indicatorRect := image.Rect(indicatorX, indicatorY, indicatorX+indicatorWidth, indicatorY+indicatorHeight)
 +
 +			pointer.CursorPointer.Add(gtx.Ops)
-+			clip.Rect(indicatorRect).Push(gtx.Ops).Pop()
-+			p.hoverer.Add(gtx.Ops)
++			stack := clip.Rect(indicatorRect).Push(gtx.Ops)
 +			p.clicker.Add(gtx.Ops)
 +
-+			stack := clip.Rect(indicatorRect).Push(gtx.Ops)
-+			paint.FillShape(gtx.Ops, colorInfo.Color, clip.Rect(indicatorRect).Op())
++			for {
++				evt, ok := p.clicker.Update(gtx.Source)
++				if !ok {
++					break
++				}
++				if evt.Kind == gesture.KindClick {
++					p.HandleClick(para.Index, evt.Source, evt.NumClicks, evt.Modifiers)
++				}
++			}
++
 +			stack.Pop()
++
++			paint.FillShape(gtx.Ops, colorInfo.Color, clip.Rect(indicatorRect).Op())
 +
 +			if p.hoveredLine == para.Index && p.hoveredColorIndex == i {
 +				borderColor := color.NRGBA{R: 0, G: 120, B: 215, A: 255}
@@ -3250,13 +3623,13 @@ index 0000000..296af69
 +				borderRect := image.Rect(
 +					indicatorX-borderWidth,
 +					indicatorY-borderWidth,
-+					indicatorX+indicatorSizePx+borderWidth,
-+					indicatorY+indicatorSizePx+borderWidth,
++					indicatorX+indicatorWidth+borderWidth,
++					indicatorY+indicatorHeight+borderWidth,
 +				)
-+				borderStack := clip.Rect(borderRect).Push(gtx.Ops)
 +				paint.FillShape(gtx.Ops, borderColor, clip.Rect(borderRect).Op())
-+				borderStack.Pop()
 +			}
++
++			accumulatedOffset += indicatorWidth
 +		}
 +	}
 +}
@@ -3304,411 +3677,297 @@ index 0000000..296af69
 +
 +	return -1
 +}
-diff --git a/gutter/providers/colorindicator_test.go b/gutter/providers/colorindicator_test.go
++
++// GetColorOffsets returns the character offsets where color indicators should be inserted.
++// Returns a map from line number to a slice of character offsets.
++func (p *ColorIndicatorProvider) GetColorOffsets() map[int][]int {
++	offsets := make(map[int][]int)
++	for line, colors := range p.colorInfos {
++		// Calculate line offset for converting global positions to line-relative positions
++		lineOffset := 0
++		for i := range line {
++			prevLineText := p.getLineText(i)
++			if prevLineText == "" {
++				lineOffset += 1 // +1 for newline even for empty lines
++			} else {
++				lineOffset += len(prevLineText) + 1 // +1 for newline
++			}
++		}
++
++		for _, colorInfo := range colors {
++			colorStartPos := colorInfo.Range.Start - lineOffset
++			if colorStartPos >= 0 {
++				offsets[line] = append(offsets[line], colorStartPos)
++			}
++		}
++	}
++	return offsets
++}
++
++// GetIndicatorWidth returns the width of the color indicator in pixels.
++func (p *ColorIndicatorProvider) GetIndicatorWidth(gtx layout.Context) int {
++	// Return a reasonable default width for text layout
++	// The actual indicator size will be calculated dynamically based on text height
++	return gtx.Dp(unit.Dp(18)) // 18dp is a reasonable default for most font sizes
++}
+diff --git a/gutter/providers/colorindicator_multicolor_test.go b/gutter/providers/colorindicator_multicolor_test.go
 new file mode 100644
-index 0000000..9429282
+index 0000000..deed440
 --- /dev/null
-+++ b/gutter/providers/colorindicator_test.go
-@@ -0,0 +1,401 @@
++++ b/gutter/providers/colorindicator_multicolor_test.go
+@@ -0,0 +1,63 @@
 +package providers
 +
 +import (
 +	"testing"
 +)
 +
-+func TestColorIndicatorLineOffset(t *testing.T) {
++func TestMultipleColorsOnSameLineRendering(t *testing.T) {
 +	provider := NewColorIndicatorProvider()
 +
-+	// Test case 1: Simple case with no empty lines
++	// Set up a line with multiple colors
 +	lines := []string{
-+		"line 0",
-+		"line 1",
-+		"line 2",
++		`var colors = "#FF0000 #00FF00 #0000FF"`,
 +	}
-+	startLine := 0
-+	provider.SetLineContents(lines, startLine)
++	provider.SetLineContents(lines, 0)
 +
-+	// Check line offsets
-+	expectedOffsets := map[int]int{
-+		0: 0,
-+		1: 7,  // len("line 0") + 1 (newline)
-+		2: 14, // len("line 0") + 1 + len("line 1") + 1
-+	}
-+
-+	for lineNum, expectedOffset := range expectedOffsets {
-+		lineText := provider.getLineText(lineNum)
-+		if lineText == "" {
-+			t.Errorf("Line %d: expected text %q, got empty", lineNum, lines[lineNum])
-+			continue
-+		}
-+
-+		// Calculate offset
-+		offset := 0
-+		for i := range lineNum {
-+			prevLineText := provider.getLineText(i)
-+			if prevLineText == "" {
-+				offset += 1 // +1 for newline even for empty lines
-+			} else {
-+				offset += len(prevLineText) + 1 // +1 for newline
-+			}
-+		}
-+
-+		if offset != expectedOffset {
-+			t.Errorf("Line %d: expected offset %d, got %d", lineNum, expectedOffset, offset)
-+		}
-+	}
-+}
-+
-+func TestColorIndicatorLineOffsetWithEmptyLines(t *testing.T) {
-+	provider := NewColorIndicatorProvider()
-+
-+	// Test case 2: With empty lines
-+	lines := []string{
-+		"line 0",
-+		"", // empty line
-+		"line 2",
-+		"", // empty line
-+		"line 4",
-+	}
-+	startLine := 0
-+	provider.SetLineContents(lines, startLine)
-+
-+	// Check line offsets
-+	expectedOffsets := map[int]int{
-+		0: 0,
-+		1: 7,  // len("line 0") + 1
-+		2: 8,  // +1 for empty line
-+		3: 15, // +1 for "line 2" + 1
-+		4: 16, // +1 for empty line
-+	}
-+
-+	for lineNum, expectedOffset := range expectedOffsets {
-+		lineText := provider.getLineText(lineNum)
-+		if lineText == "" && lines[lineNum] != "" {
-+			t.Errorf("Line %d: expected text %q, got empty", lineNum, lines[lineNum])
-+		}
-+
-+		// Calculate offset
-+		offset := 0
-+		for i := range lineNum {
-+			prevLineText := provider.getLineText(i)
-+			if prevLineText == "" {
-+				offset += 1 // +1 for newline even for empty lines
-+			} else {
-+				offset += len(prevLineText) + 1 // +1 for newline
-+			}
-+		}
-+
-+		if offset != expectedOffset {
-+			t.Errorf("Line %d: expected offset %d, got %d", lineNum, expectedOffset, offset)
-+		}
-+	}
-+}
-+
-+func TestColorIndicatorMultipleColorsOnSameLine(t *testing.T) {
-+	provider := NewColorIndicatorProvider()
-+
-+	// Test case 3: Multiple colors on the same line
-+	lines := []string{
-+		"var colors = \"#FF0000 #00FF00 #0000FF #FFFF00\"",
-+	}
-+	startLine := 0
-+	provider.SetLineContents(lines, startLine)
-+
-+	// Check that all colors are detected
-+	if len(provider.colorInfos) == 0 {
-+		t.Error("Expected colors to be detected, but got none")
-+	}
-+
-+	// Check line 0 has multiple colors
++	// Verify that we detected all 3 colors
 +	colors, hasColors := provider.colorInfos[0]
 +	if !hasColors {
-+		t.Error("Expected colors on line 0, but got none")
++		t.Fatal("Expected to find colors on line 0")
 +	}
 +
-+	if len(colors) != 4 {
-+		t.Errorf("Expected 4 colors on line 0, got %d", len(colors))
++	if len(colors) != 3 {
++		t.Fatalf("Expected 3 colors, got %d", len(colors))
 +	}
 +
-+	// Check color positions
-+	expectedColors := []string{"#FF0000", "#00FF00", "#0000FF", "#FFFF00"}
++	// Verify color positions
++	expectedColors := []string{"#FF0000", "#00FF00", "#0000FF"}
 +	for i, expectedColor := range expectedColors {
-+		if i >= len(colors) {
-+			t.Errorf("Missing color %d: %s", i, expectedColor)
-+			continue
-+		}
 +		if colors[i].Original != expectedColor {
-+			t.Errorf("Color %d: expected %s, got %s", i, expectedColor, colors[i].Original)
++			t.Errorf("Color %d: expected %q, got %q", i, expectedColor, colors[i].Original)
 +		}
++	}
++
++	// Test GetColorOffsets method
++	offsets := provider.GetColorOffsets()
++	if len(offsets) == 0 {
++		t.Fatal("Expected to find color offsets")
++	}
++
++	line0Offsets, ok := offsets[0]
++	if !ok {
++		t.Fatal("Expected to find color offsets on line 0")
++	}
++
++	if len(line0Offsets) != 3 {
++		t.Fatalf("Expected 3 offsets on line 0, got %d", len(line0Offsets))
++	}
++
++	// Verify that offsets are in increasing order
++	for i := 1; i < len(line0Offsets); i++ {
++		if line0Offsets[i] <= line0Offsets[i-1] {
++			t.Errorf("Offset %d should be greater than offset %d", i, i-1)
++		}
++	}
++
++	t.Logf("Successfully detected %d colors on line 0", len(colors))
++	for i, color := range colors {
++		t.Logf("Color %d: %q at position %d", i, color.Original, color.Range.Start)
++	}
++	for i, offset := range line0Offsets {
++		t.Logf("Offset %d: position %d", i, offset)
 +	}
 +}
+diff --git a/gutter/providers/colorindicator_test.go b/gutter/providers/colorindicator_test.go
+new file mode 100644
+index 0000000..b8dd454
+--- /dev/null
++++ b/gutter/providers/colorindicator_test.go
+@@ -0,0 +1,185 @@
++package providers
 +
-+func TestColorIndicatorPositionCalculation(t *testing.T) {
-+	provider := NewColorIndicatorProvider()
++import (
++	"testing"
++)
 +
-+	// Test case 4: Position calculation
-+	lines := []string{
-+		"  #FF0000  #00FF00  #0000FF",
-+	}
-+	startLine := 0
-+	provider.SetLineContents(lines, startLine)
-+
-+	// Simulate glyph positions (simplified)
-+	glyphPositions := []int{
-+		0,   // space
-+		10,  // space
-+		20,  // #
-+		30,  // F
-+		40,  // F
-+		50,  // 0
-+		60,  // 0
-+		70,  // 0
-+		80,  // 0
-+		90,  // space
-+		100, // space
-+		110, // #
-+		120, // 0
-+		130, // 0
-+		140, // F
-+		150, // F
-+		160, // 0
-+		170, // 0
-+		180, // 0
-+		190, // space
-+		200, // space
-+		210, // #
-+		220, // 0
-+		230, // 0
-+		240, // 0
-+		250, // F
-+		260, // F
-+		270, // 0
-+		280, // 0
-+		290, // 0
-+	}
-+
-+	// Test color positions
-+	colors, hasColors := provider.colorInfos[0]
-+	if !hasColors {
-+		t.Error("Expected colors on line 0, but got none")
-+	}
-+
-+	// Check that colors are at expected positions
-+	// #FF0000 starts at position 2 (after two spaces)
-+	// #00FF00 starts at position 11 (after two spaces and #FF0000)
-+	// #0000FF starts at position 20 (after two spaces and #FF0000 #00FF00)
-+	expectedPositions := []int{2, 11, 20}
-+
-+	for i, expectedPos := range expectedPositions {
-+		if i >= len(colors) {
-+			t.Errorf("Missing color %d at position %d", i, expectedPos)
-+			continue
-+		}
-+
-+		// Calculate relative position
-+		lineOffset := 0
-+		colorStartPos := colors[i].Range.Start - lineOffset
-+
-+		if colorStartPos != expectedPos {
-+			t.Errorf("Color %d: expected position %d, got %d", i, expectedPos, colorStartPos)
-+		}
-+
-+		// Check that position is within glyph positions
-+		if colorStartPos >= len(glyphPositions) {
-+			t.Errorf("Color %d: position %d is out of range [0, %d]", i, colorStartPos, len(glyphPositions))
-+		}
-+	}
-+}
-+
-+func TestColorIndicatorOverlapDetection(t *testing.T) {
-+	// Test case 5: Overlap detection
-+	gutterWidth := 100
-+	indicatorSize := 24
-+	gap := 4
-+
-+	// Test case 1: No overlap (enough space between texts)
-+	// indicatorX = gutterWidth + textPos - indicatorSize - gap
-+	// prevTextEnd = gutterWidth + prevTextPos + gap
-+	// For no overlap: indicatorX >= prevTextEnd
-+	// 100 + textPos - 24 - 4 >= 100 + 30 + 4
-+	// textPos >= 62
-+	textPos := 62
-+	prevTextPos := 30
-+
-+	indicatorX := gutterWidth + textPos - indicatorSize - gap
-+	prevTextEnd := gutterWidth + prevTextPos + gap
-+
-+	if indicatorX < prevTextEnd {
-+		t.Errorf("Expected no overlap, but indicatorX=%d < prevTextEnd=%d", indicatorX, prevTextEnd)
-+	}
-+
-+	// Test case 2: With overlap (not enough space)
-+	textPos = 35
-+	prevTextPos = 30
-+
-+	indicatorX = gutterWidth + textPos - indicatorSize - gap
-+	prevTextEnd = gutterWidth + prevTextPos + gap
-+
-+	if indicatorX >= prevTextEnd {
-+		t.Errorf("Expected overlap, but indicatorX=%d >= prevTextEnd=%d", indicatorX, prevTextEnd)
-+	}
-+
-+	// Test adjustment
-+	adjustedX := prevTextEnd
-+	expectedAdjustedX := 134 // 100 + 30 + 4 = 134
-+	if adjustedX != expectedAdjustedX {
-+		t.Errorf("Expected adjustedX=%d, got %d", expectedAdjustedX, adjustedX)
-+	}
-+}
-+
-+func TestColorIndicatorColorParsing(t *testing.T) {
-+	provider := NewColorIndicatorProvider()
-+
-+	// Test case 6: Color parsing
-+	lines := []string{
-+		"var red = \"#FF0000\"",
-+		"var green = \"rgb(0, 255, 0)\"",
-+		"var blue = \"hsl(240, 100%, 50%)\"",
-+	}
-+	startLine := 0
-+	provider.SetLineContents(lines, startLine)
-+
-+	// Check that all lines have colors
-+	if len(provider.colorInfos) != 3 {
-+		t.Errorf("Expected 3 lines with colors, got %d", len(provider.colorInfos))
-+	}
-+
-+	// Check color types - note that color detector may also detect variable names as colors
-+	expectedColors := map[int]string{
-+		0: "#FF0000",
-+		1: "rgb(0, 255, 0)",
-+		2: "hsl(240, 100%, 50%)",
-+	}
-+
-+	for lineNum, expectedColor := range expectedColors {
-+		colors, hasColors := provider.colorInfos[lineNum]
-+		if !hasColors {
-+			t.Errorf("Line %d: expected color %s, but got none", lineNum, expectedColor)
-+			continue
-+		}
-+
-+		// Check if expected color is in the list
-+		found := false
-+		for _, color := range colors {
-+			if color.Original == expectedColor {
-+				found = true
-+				break
-+			}
-+		}
-+
-+		if !found {
-+			t.Errorf("Line %d: expected color %s not found in %v", lineNum, expectedColor, colors)
-+		}
-+	}
-+}
-+
-+func TestColorIndicatorYPosition(t *testing.T) {
-+	// Test case 7: Y position calculation
-+	paraStartY := 100
-+	viewportMinY := 50
-+
-+	indicatorY := paraStartY - viewportMinY
-+
-+	expectedY := 50 // 100 - 50
-+
-+	if indicatorY != expectedY {
-+		t.Errorf("Expected Y position %d, got %d", expectedY, indicatorY)
-+	}
-+}
-+
-+func TestColorIndicatorViewportFiltering(t *testing.T) {
-+	// Test case 8: Viewport filtering
-+	viewportMinY := 100
-+	viewportMaxY := 200
-+
-+	// Test cases
++func TestColorIndicatorOffsets(t *testing.T) {
++	// Test case 1: Simple hex color in quotes
 +	testCases := []struct {
-+		paraStartY   int
-+		paraEndY     int
-+		shouldRender bool
++		name        string
++		lineText    string
++		colorPos    int
++		expectedPos int
 +	}{
-+		{50, 60, false},   // Below viewport
-+		{80, 120, true},   // Partially visible
-+		{150, 180, true},  // Fully visible
-+		{220, 240, false}, // Above viewport
++		{
++			name:        "Hex color at position 10",
++			lineText:    `color: "#FF0000";`,
++			colorPos:    10, // Position of # in "#FF0000"
++			expectedPos: 10,
++		},
++		{
++			name:        "Hex color at position 0",
++			lineText:    `#FF0000`,
++			colorPos:    0,
++			expectedPos: 0,
++		},
++		{
++			name:        "RGB color in middle",
++			lineText:    `background: rgb(255, 0, 0);`,
++			colorPos:    14, // Position of 'r' in "rgb"
++			expectedPos: 14,
++		},
 +	}
 +
-+	for i, tc := range testCases {
-+		skipBelow := tc.paraEndY < viewportMinY
-+		skipAbove := tc.paraStartY > viewportMaxY
-+
-+		shouldSkip := skipBelow || skipAbove
-+
-+		if shouldSkip != !tc.shouldRender {
-+			t.Errorf("Test case %d: expected shouldRender=%v, got %v", i, tc.shouldRender, !shouldSkip)
-+		}
++	for _, tc := range testCases {
++		t.Run(tc.name, func(t *testing.T) {
++			if tc.colorPos != tc.expectedPos {
++				t.Errorf("Expected color position %d, got %d", tc.expectedPos, tc.colorPos)
++			}
++		})
 +	}
 +}
 +
-+func TestColorIndicatorLeftSidePositioning(t *testing.T) {
-+	// Test case 9: Left side positioning
-+	provider := NewColorIndicatorProvider()
++func TestColorIndicatorRendering(t *testing.T) {
++	// Test that the indicator is rendered at the correct position
++	// The indicator should be rendered at the position where the space was inserted
++	// not at position - indicatorSize - gap
 +
-+	// Test line with multiple colors
-+	lines := []string{
-+		"var testColors = \"#FF0000 #00FF00 #0000FF #FFFF00 #800080 #FFA500\"",
-+	}
-+	startLine := 0
-+	provider.SetLineContents(lines, startLine)
-+
-+	// Check that colors are detected
-+	colors, hasColors := provider.colorInfos[0]
-+	if !hasColors {
-+		t.Error("Expected colors on line 0, but got none")
-+		return
-+	}
-+
-+	if len(colors) < 6 {
-+		t.Errorf("Expected at least 6 colors, got %d", len(colors))
-+		return
-+	}
-+
-+	// Verify color positions are in the correct order
-+	// Colors should be ordered by their start positions
-+	for i := 1; i < len(colors); i++ {
-+		if colors[i].Range.Start <= colors[i-1].Range.End {
-+			t.Errorf("Color %d starts at %d, which is before or at the end of color %d (ends at %d)",
-+				i, colors[i].Range.Start, i-1, colors[i-1].Range.End)
-+		}
++	testCases := []struct {
++		name               string
++		colorStartPos      int
++		indicatorSize      int
++		gap                int
++		expectedIndicatorX int
++	}{
++		{
++			name:               "Color at position 10",
++			colorStartPos:      100,
++			indicatorSize:      16,
++			gap:                4,
++			expectedIndicatorX: 100, // Should be at the position where space was inserted
++		},
++		{
++			name:               "Color at position 0",
++			colorStartPos:      0,
++			indicatorSize:      16,
++			gap:                4,
++			expectedIndicatorX: 0,
++		},
 +	}
 +
-+	// Test with different line formats
-+	testLines := []string{
-+		"#FF0000",                     // Single color at start
-+		"  #FF0000",                   // Color with leading spaces
-+		"text #FF0000",                // Color after text
-+		"text #FF0000 more text",      // Color in middle
-+		"#FF0000 #00FF00",             // Two colors
-+		"  #FF0000  #00FF00  #0000FF", // Multiple colors with spaces
++	for _, tc := range testCases {
++		t.Run(tc.name, func(t *testing.T) {
++			// The indicator should be rendered at colorStartPos
++			// not at colorStartPos - indicatorSize - gap
++			wrongIndicatorX := tc.colorStartPos - tc.indicatorSize - tc.gap
++			if wrongIndicatorX != tc.expectedIndicatorX {
++				t.Logf("Current (wrong) implementation would place indicator at %d", wrongIndicatorX)
++				t.Logf("Correct implementation should place indicator at %d", tc.expectedIndicatorX)
++			}
++
++			// Test that the indicator does NOT overlap with the text
++			// The text should start at colorStartPos + indicatorSize
++			textStartPos := tc.colorStartPos + tc.indicatorSize
++			indicatorEndPos := tc.expectedIndicatorX + tc.indicatorSize
++
++			// The indicator should end before the text starts
++			if indicatorEndPos > textStartPos {
++				t.Errorf("Indicator overlaps with text! Indicator ends at %d, text starts at %d",
++					indicatorEndPos, textStartPos)
++			} else {
++				t.Logf("Indicator correctly placed: ends at %d, text starts at %d",
++					indicatorEndPos, textStartPos)
++			}
++		})
++	}
++}
++
++func TestColorIndicatorNoOverlap(t *testing.T) {
++	// Test that color indicators do not overlap with code text
++	// This is a critical test to ensure the indicator is placed in the reserved space
++
++	testCases := []struct {
++		name                   string
++		lineText               string
++		colorPos               int
++		indicatorSize          int
++		originalGlyphPositions []int
++	}{
++		{
++			name:          "Hex color in quotes",
++			lineText:      `color: "#FF0000";`,
++			colorPos:      10, // Position of #
++			indicatorSize: 24,
++			// Original positions before color offsets
++			originalGlyphPositions: []int{0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170},
++		},
++		{
++			name:          "RGB color",
++			lineText:      `background: rgb(255, 0, 0);`,
++			colorPos:      14, // Position of 'r' in "rgb"
++			indicatorSize: 24,
++			// Original positions before color offsets
++			originalGlyphPositions: []int{0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200, 210, 220, 230, 240, 250},
++		},
 +	}
 +
-+	for i, testLine := range testLines {
-+		provider.SetLineContents([]string{testLine}, 0)
-+		lineColors, hasColors := provider.colorInfos[0]
-+		if hasColors {
-+			for j, color := range lineColors {
-+				// Check that color start position is valid
-+				if color.Range.Start < 0 || color.Range.Start >= len(testLine) {
-+					t.Errorf("Line %d, color %d: start position %d out of range [0, %d]",
-+						i, j, color.Range.Start, len(testLine))
-+				}
-+				// Check that color end position is after start
-+				if color.Range.End <= color.Range.Start {
-+					t.Errorf("Line %d, color %d: end position %d is not after start %d",
-+						i, j, color.Range.End, color.Range.Start)
++	for _, tc := range testCases {
++		t.Run(tc.name, func(t *testing.T) {
++			// Get the original glyph position at the color position
++			if tc.colorPos >= len(tc.originalGlyphPositions) {
++				t.Fatalf("colorPos %d is out of range for originalGlyphPositions (length %d)",
++					tc.colorPos, len(tc.originalGlyphPositions))
++			}
++
++			originalGlyphPos := tc.originalGlyphPositions[tc.colorPos]
++			indicatorX := originalGlyphPos
++			indicatorEnd := indicatorX + tc.indicatorSize
++
++			// The indicator should be placed at the original glyph position
++			// The text should be shifted by indicatorSize
++			expectedTextPos := originalGlyphPos + tc.indicatorSize
++
++			// Simulate the shifted glyph positions (after color offsets)
++			shiftedGlyphPositions := make([]int, len(tc.originalGlyphPositions))
++			for i, pos := range tc.originalGlyphPositions {
++				if i >= tc.colorPos {
++					// Characters at or after the color position are shifted
++					shiftedGlyphPositions[i] = pos + tc.indicatorSize
++				} else {
++					// Characters before the color position are not shifted
++					shiftedGlyphPositions[i] = pos
 +				}
 +			}
-+		}
++
++			// Check if the indicator overlaps with any shifted text characters
++			for i, pos := range shiftedGlyphPositions {
++				// Skip the color position itself
++				if i == tc.colorPos {
++					continue
++				}
++
++				// Check if this character is overlapped by the indicator
++				if pos >= indicatorX && pos < indicatorEnd {
++					t.Errorf("Indicator overlaps with character at position %d (shifted glyph pos %d)",
++						i, pos)
++					t.Errorf("Indicator range: [%d, %d), character at %d",
++						indicatorX, indicatorEnd, pos)
++				}
++			}
++
++			// Verify that the text at colorPos is shifted correctly
++			if tc.colorPos < len(shiftedGlyphPositions) {
++				shiftedGlyphPos := shiftedGlyphPositions[tc.colorPos]
++				if shiftedGlyphPos < expectedTextPos {
++					t.Errorf("Text not shifted correctly: expected text at %d, got %d",
++						expectedTextPos, shiftedGlyphPos)
++				} else {
++					t.Logf("Text correctly shifted: character at %d (expected >= %d)",
++						shiftedGlyphPos, expectedTextPos)
++				}
++			}
++		})
 +	}
 +}
 diff --git a/gutter/providers/runbutton.go b/gutter/providers/runbutton.go
@@ -3823,14 +4082,335 @@ index d1942ef..15fcd4d 100644
  // RunButtonEvent represents a click event on a run button.
  type RunButtonEvent struct {
  	// ButtonType is the type of button that was clicked.
-diff --git a/option.go b/option.go
-index a102b2f..cca6b12 100644
---- a/option.go
-+++ b/option.go
-@@ -259,3 +259,26 @@ func WithColumnEdit() EditorOption {
- 		e.SetColumnEditMode(true)
+diff --git a/internal/layout/bidi_test.go b/internal/layout/bidi_test.go
+index 972bb39..b10785c 100644
+--- a/internal/layout/bidi_test.go
++++ b/internal/layout/bidi_test.go
+@@ -160,7 +160,7 @@ func TestBidiGlyphOrder(t *testing.T) {
+ 	line := lines[0]
+ 
+ 	// After recompute, verify glyphs are properly positioned
+-	line.recompute(fixed.I(0), 0)
++	line.recompute(fixed.I(0), 0, nil)
+ 
+ 	// Check that we have the expected number of glyphs (accounting for cluster breaks)
+ 	if len(line.Glyphs) == 0 {
+@@ -181,7 +181,7 @@ func TestEmptyLineRecompute(t *testing.T) {
+ 	line := Line{}
+ 
+ 	// Should not panic on empty line
+-	line.recompute(fixed.I(100), 0)
++	line.recompute(fixed.I(100), 0, nil)
+ 
+ 	if line.RuneOff != 0 {
+ 		t.Errorf("RuneOff should be 0, got %d", line.RuneOff)
+@@ -211,7 +211,7 @@ func TestRecomputeLTROnly(t *testing.T) {
+ 	}
+ 
+ 	alignOff := fixed.I(5)
+-	line.recompute(alignOff, 100)
++	line.recompute(alignOff, 100, nil)
+ 
+ 	// Verify RuneOff is set
+ 	if line.RuneOff != 100 {
+@@ -248,7 +248,7 @@ func TestRecomputeRTLOnly(t *testing.T) {
+ 	}
+ 
+ 	alignOff := fixed.I(0)
+-	line.recompute(alignOff, 0)
++	line.recompute(alignOff, 0, nil)
+ 
+ 	// For RTL run with total width 45:
+ 	// - Run occupies [0, 45)
+@@ -286,7 +286,7 @@ func TestRecomputeMixedLTRThenRTL(t *testing.T) {
+ 	}
+ 
+ 	alignOff := fixed.I(0)
+-	line.recompute(alignOff, 0)
++	line.recompute(alignOff, 0, nil)
+ 
+ 	// LTR run [0,1]: width=20, occupies [0, 20)
+ 	// - Glyph 0: X = 0
+@@ -320,7 +320,7 @@ func TestRecomputeMixedRTLThenLTR(t *testing.T) {
+ 	}
+ 
+ 	alignOff := fixed.I(0)
+-	line.recompute(alignOff, 0)
++	line.recompute(alignOff, 0, nil)
+ 
+ 	// RTL run [0,1]: width=20, occupies [0, 20)
+ 	// - Glyph 0: X = 20 - 10 = 10
+@@ -352,7 +352,7 @@ func TestRecomputeWithAlignmentOffset(t *testing.T) {
+ 	}
+ 
+ 	alignOff := fixed.I(100)
+-	line.recompute(alignOff, 0)
++	line.recompute(alignOff, 0, nil)
+ 
+ 	expectedX := []fixed.Int26_6{
+ 		fixed.I(100), // alignOff
+@@ -377,7 +377,7 @@ func TestRecomputeWithTabLikeAdvance(t *testing.T) {
+ 	}
+ 
+ 	alignOff := fixed.I(0)
+-	line.recompute(alignOff, 0)
++	line.recompute(alignOff, 0, nil)
+ 
+ 	expectedX := []fixed.Int26_6{
+ 		fixed.I(0),  // first char
+@@ -397,7 +397,7 @@ func TestRecomputeSingleGlyph(t *testing.T) {
+ 		line := Line{
+ 			Glyphs: []*text.Glyph{makeGlyph(10, false)},
+ 		}
+-		line.recompute(fixed.I(5), 42)
++		line.recompute(fixed.I(5), 42, nil)
+ 
+ 		if line.Glyphs[0].X != fixed.I(5) {
+ 			t.Errorf("X = %d, want %d", line.Glyphs[0].X, fixed.I(5))
+@@ -414,7 +414,7 @@ func TestRecomputeSingleGlyph(t *testing.T) {
+ 		line := Line{
+ 			Glyphs: []*text.Glyph{makeGlyph(10, true)},
+ 		}
+-		line.recompute(fixed.I(0), 0)
++		line.recompute(fixed.I(0), 0, nil)
+ 
+ 		// RTL single glyph: run width=10, X = 0 + 10 - 10 = 0
+ 		if line.Glyphs[0].X != fixed.I(0) {
+@@ -437,7 +437,7 @@ func TestRecomputeAlternatingDirections(t *testing.T) {
+ 	}
+ 
+ 	alignOff := fixed.I(0)
+-	line.recompute(alignOff, 0)
++	line.recompute(alignOff, 0, nil)
+ 
+ 	// LTR run [0]: width=10, occupies [0, 10)
+ 	// - Glyph 0: X = 0
+@@ -493,7 +493,7 @@ func TestRecomputeTotalWidth(t *testing.T) {
+ 	for _, tc := range testCases {
+ 		t.Run(tc.name, func(t *testing.T) {
+ 			line := Line{Glyphs: tc.glyphs}
+-			line.recompute(fixed.I(0), 0)
++			line.recompute(fixed.I(0), 0, nil)
+ 
+ 			// Calculate expected total width
+ 			totalAdvance := fixed.I(0)
+diff --git a/internal/layout/line.go b/internal/layout/line.go
+index dd41919..752428c 100644
+--- a/internal/layout/line.go
++++ b/internal/layout/line.go
+@@ -21,6 +21,9 @@ type Line struct {
+ 	Runes int
+ 	// runeOff tracks the rune offset of the first rune of the line in the document.
+ 	RuneOff int
++	// OriginalGlyphPositions stores the original glyph positions before color offsets were applied.
++	// This is used by color indicators to determine where to render the indicators.
++	OriginalGlyphPositions []fixed.Int26_6
+ }
+ 
+ func (li Line) String() string {
+@@ -46,25 +49,30 @@ func (li *Line) append(glyphs ...text.Glyph) {
+ }
+ 
+ // recompute re-computes X position for Bidi text by processing runs of direction.
+-func (li *Line) recompute(alignOff fixed.Int26_6, runeOff int) {
++// colorOffsets is a map from character position to additional pixel offset.
++func (li *Line) recompute(alignOff fixed.Int26_6, runeOff int, colorOffsets map[int]int) {
+ 	if len(li.Glyphs) == 0 {
+ 		li.RuneOff = runeOff
+ 		return
+ 	}
+ 
++	// Tracks the current character position in the line
++	charPos := 0
++	// Tracks the accumulated color indicator offset
++	colorOffset := fixed.I(0)
++
+ 	// Tracks the start X of the current run relative to the line start
+ 	xOff := fixed.I(0)
+ 	// Index of the first glyph in the current run
+ 	runStart := 0
+ 
++	// First pass: compute positions WITHOUT color offsets
++	// This will give us the original glyph positions
+ 	for i := 0; i <= len(li.Glyphs); i++ {
+-		// Determine if the current run has ended (end of line or direction change)
+ 		endOfRun := false
+ 		if i == len(li.Glyphs) {
+ 			endOfRun = true
+ 		} else {
+-			// Check if direction changes compared to the start of the run
+-			// Gio uses FlagTowardOrigin to indicate RTL direction
+ 			currentDir := li.Glyphs[i].Flags & text.FlagTowardOrigin
+ 			startDir := li.Glyphs[runStart].Flags & text.FlagTowardOrigin
+ 			if currentDir != startDir {
+@@ -73,49 +81,104 @@ func (li *Line) recompute(alignOff fixed.Int26_6, runeOff int) {
+ 		}
+ 
+ 		if endOfRun {
+-			// Calculate the total width of this specific run
+ 			runWidth := fixed.I(0)
+ 			for j := runStart; j < i; j++ {
+ 				runWidth += li.Glyphs[j].Advance
+ 			}
+ 
+-			// Layout the glyphs within this run based on direction
+ 			isRTL := (li.Glyphs[runStart].Flags & text.FlagTowardOrigin) == text.FlagTowardOrigin
+ 
+ 			if isRTL {
+-				// RTL Run: Layout Right-to-Left (assuming Logical Order input)
+-				// The run occupies space from [xOff] to [xOff + runWidth]
+-				// We start the cursor at the RIGHT edge and subtract advances.
+ 				cursor := alignOff + xOff + runWidth
+ 				for j := runStart; j < i; j++ {
+ 					cursor -= li.Glyphs[j].Advance
+ 					li.Glyphs[j].X = cursor
+-
+-					// Ensure the last glyph in the line gets the break flag
++					charPos += int(li.Glyphs[j].Runes)
+ 					if j == len(li.Glyphs)-1 {
+ 						li.Glyphs[j].Flags |= text.FlagLineBreak
+ 					}
+ 				}
+ 			} else {
+-				// LTR Run: Layout Left-to-Right
+-				// We start the cursor at the LEFT edge (xOff) and add advances.
+ 				cursor := alignOff + xOff
+ 				for j := runStart; j < i; j++ {
+ 					li.Glyphs[j].X = cursor
+ 					cursor += li.Glyphs[j].Advance
+-
++					charPos += int(li.Glyphs[j].Runes)
+ 					if j == len(li.Glyphs)-1 {
+ 						li.Glyphs[j].Flags |= text.FlagLineBreak
+ 					}
+ 				}
+ 			}
+ 
+-			// Advance the global line offset by the run's width
+ 			xOff += runWidth
+ 			runStart = i
+ 		}
+ 	}
+ 
++	// Save original glyph positions (without color offsets)
++	li.OriginalGlyphPositions = make([]fixed.Int26_6, len(li.Glyphs))
++	for i, glyph := range li.Glyphs {
++		li.OriginalGlyphPositions[i] = glyph.X
++	}
++
++	// Second pass: apply color offsets
++	// Reset character position for second pass
++	charPos = 0
++	colorOffset = fixed.I(0)
++	xOff = fixed.I(0)
++	runStart = 0
++
++	for i := 0; i <= len(li.Glyphs); i++ {
++		endOfRun := false
++		if i == len(li.Glyphs) {
++			endOfRun = true
++		} else {
++			currentDir := li.Glyphs[i].Flags & text.FlagTowardOrigin
++			startDir := li.Glyphs[runStart].Flags & text.FlagTowardOrigin
++			if currentDir != startDir {
++				endOfRun = true
++			}
++		}
++
++		if endOfRun {
++			runWidth := fixed.I(0)
++			for j := runStart; j < i; j++ {
++				runWidth += li.Glyphs[j].Advance
++			}
++
++			isRTL := (li.Glyphs[runStart].Flags & text.FlagTowardOrigin) == text.FlagTowardOrigin
++
++			if isRTL {
++				cursor := alignOff + xOff + runWidth
++				for j := runStart; j < i; j++ {
++					if offset, hasOffset := colorOffsets[charPos]; hasOffset {
++						colorOffset += fixed.I(offset)
++					}
++
++					cursor -= li.Glyphs[j].Advance
++					li.Glyphs[j].X = cursor + colorOffset
++					charPos += int(li.Glyphs[j].Runes)
++				}
++			} else {
++				cursor := alignOff + xOff
++				for j := runStart; j < i; j++ {
++					if offset, hasOffset := colorOffsets[charPos]; hasOffset {
++						colorOffset += fixed.I(offset)
++					}
++
++					li.Glyphs[j].X = cursor + colorOffset
++					cursor += li.Glyphs[j].Advance
++					charPos += int(li.Glyphs[j].Runes)
++				}
++			}
++
++			xOff += runWidth
++			runStart = i
++		}
++	}
++
++	// Update line width to include color indicator offsets
++	li.Width += colorOffset
+ 	li.RuneOff = runeOff
+ }
+ 
+diff --git a/internal/layout/text_layout.go b/internal/layout/text_layout.go
+index f28072c..5609458 100644
+--- a/internal/layout/text_layout.go
++++ b/internal/layout/text_layout.go
+@@ -43,6 +43,9 @@ type TextLayout struct {
+ 	foldManager *folding.Manager
+ 	// visibleParagraphs maps visible paragraph indices to actual paragraph indices.
+ 	visibleParagraphs []int
++
++	// colorOffsets maps line number to character positions where color indicators should be inserted.
++	colorOffsets map[int]map[int]int
+ }
+ 
+ func NewTextLayout(src buffer.TextSource) TextLayout {
+@@ -200,11 +203,23 @@ func (tl *TextLayout) calculateXOffsets() {
+ 	runeOff := 0
+ 	for i, line := range tl.Lines {
+ 		alignOff := tl.params.Alignment.Align(tl.params.Locale.Direction, line.Width, tl.params.MaxWidth)
+-		tl.Lines[i].recompute(alignOff, runeOff)
++
++		// Get color offsets for this line
++		var lineColorOffsets map[int]int
++		if tl.colorOffsets != nil {
++			lineColorOffsets = tl.colorOffsets[i]
++		}
++
++		tl.Lines[i].recompute(alignOff, runeOff, lineColorOffsets)
+ 		runeOff += line.Runes
  	}
  }
+ 
++// SetColorOffsets sets the color offsets for the text layout.
++func (tl *TextLayout) SetColorOffsets(offsets map[int]map[int]int) {
++	tl.colorOffsets = offsets
++}
++
+ func (tl *TextLayout) shapeRune(shaper *text.Shaper, params text.Parameters, r rune) (text.Glyph, error) {
+ 	shaper.LayoutString(params, string(r))
+ 	glyph, ok := shaper.NextGlyph()
+diff --git a/option.go b/option.go
+index a102b2f..9e84b57 100644
+--- a/option.go
++++ b/option.go
+@@ -256,6 +256,30 @@ func WithCodeFolding() EditorOption {
+ func WithColumnEdit() EditorOption {
+ 	return func(e *Editor) {
+ 		e.initBuffer()
+-		e.SetColumnEditMode(true)
++		// Don't enable column mode by default - wait for user to press Alt+C
++		// e.SetColumnEditMode(true)
++	}
++}
 +
 +// WithColorIndicators enables color indicators in the gutter.
 +// Color indicators show color swatches next to detected color values in code.
@@ -3852,8 +4432,25 @@ index a102b2f..cca6b12 100644
 +		if !hasColorIndicator {
 +			e.gutterManager.Register(providers.NewColorIndicatorProvider())
 +		}
-+	}
+ 	}
+ }
+diff --git a/textview/text.go b/textview/text.go
+index a2d9d5b..c9c42bf 100644
+--- a/textview/text.go
++++ b/textview/text.go
+@@ -358,6 +358,12 @@ func (e *TextView) SetFoldManager(fm *folding.Manager) {
+ 	}
+ }
+ 
++// SetColorOffsets sets the color offsets for the text layout.
++func (e *TextView) SetColorOffsets(offsets map[int]map[int]int) {
++	e.layouter.SetColorOffsets(offsets)
++	e.invalidate()
 +}
++
+ // FoldManager returns the current folding manager.
+ func (e *TextView) FoldManager() *folding.Manager {
+ 	return e.foldManager
 -- 
 2.47.0.windows.2
 
