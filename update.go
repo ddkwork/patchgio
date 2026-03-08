@@ -94,6 +94,8 @@ module gioui.org
 
 go 1.26.1
 
+ignore example
+
 `), 0o644)
 		updateAllDeps(gioRepoDir, true)
 		downgradeBugDeps(gioRepoDir)
@@ -135,7 +137,6 @@ func downgradeBugDeps(repoDir string) {
 }
 
 func updateAllDeps(repoDir string, runTidy bool) {
-	return
 	if runTidy {
 		stream.RunCommandWithDir(repoDir, "go", "mod", "tidy")
 	}
@@ -205,7 +206,7 @@ func runModernizeCommands(repoDir string) {
 	}
 	gitCommitWithDir(repoDir, "格式化代码")
 
-	// stream.Fix(repoDir)
+	stream.Fix(repoDir)
 	if !gitAddWithDir(repoDir) {
 		mylog.Warning("没有检测到旧语法需要升级")
 		return
