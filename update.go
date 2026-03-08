@@ -94,7 +94,10 @@ module gioui.org
 
 go 1.26.1
 
-ignore example
+ignore (
+	example
+	shader
+)
 
 `), 0o644)
 		updateAllDeps(gioRepoDir, true)
