@@ -1,16 +1,21 @@
-From e2ddbcc3126daf7b53c8d1433452bc825756157b Mon Sep 17 00:00:00 2001
+From 99d7379e4feaed0063010752379c2524a0381af4 Mon Sep 17 00:00:00 2001
 From: Admin <2762713521@qq.com>
-Date: Mon, 9 Mar 2026 00:06:33 +0800
-Subject: [PATCH] feat(颜色指示器): 添加代码颜色值检测与可视化指示器功能
+Date: Mon, 9 Mar 2026 00:26:16 +0800
+Subject: [PATCH] feat(颜色指示器): 实现代码编辑器中的颜色指示器功能
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
-实现颜色值检测功能，支持多种颜色格式(HEX, RGB, HSL等)
-添加颜色指示器组件，在代码中显示颜色预览
-集成颜色选择器，允许用户点击颜色指示器修改颜色值
-更新文本布局系统以支持颜色指示器空间预留
-添加相关测试用例和文档说明
+新增颜色指示器功能，可在代码中检测颜色值并显示可视化指示器。主要变更包括：
+
+1. 添加 ColorIndicatorProvider 用于检测和渲染颜色指示器
+2. 实现 EditorColorPicker 提供颜色选择器界面
+3. 扩展文本布局系统以支持颜色指示器空间预留
+4. 添加颜色检测器用于识别多种格式的颜色值
+5. 提供 WithColorIndicators 编辑器选项启用功能
+6. 添加相关测试用例和文档说明
+
+新增功能允许用户点击颜色指示器打开颜色选择器，方便地修改代码中的颜色值。支持 HEX、RGB、HSL 等多种颜色格式检测和显示。
 ---
  colorpicker/color_detector.go                 |  447 +++++++
  colorpicker/color_picker.go                   | 1140 +++++++++++++++++
@@ -21,7 +26,6 @@ Content-Transfer-Encoding: 8bit
  docs/color-indicator-implementation.md        |  321 +++++
  editor.go                                     |  147 ++-
  example/main.go                               |  117 +-
- go.mod                                        |    2 +-
  gutter.go                                     |   34 +-
  gutter/gutter.go                              |   28 +
  gutter/manager.go                             |    4 -
@@ -34,7 +38,7 @@ Content-Transfer-Encoding: 8bit
  internal/layout/text_layout.go                |   17 +-
  option.go                                     |   26 +-
  textview/text.go                              |    6 +
- 22 files changed, 3804 insertions(+), 66 deletions(-)
+ 21 files changed, 3803 insertions(+), 65 deletions(-)
  create mode 100644 colorpicker/color_detector.go
  create mode 100644 colorpicker/color_picker.go
  create mode 100644 colorpicker/color_preview.go
@@ -3026,18 +3030,6 @@ index da5a9fa..2d995c4 100644
  	tokens := HightlightTextByPattern(editorApp.state.Text(), syntaxPattern)
  	editorApp.state.SetSyntaxTokens(tokens...)
  
-diff --git a/go.mod b/go.mod
-index 196d9bb..d592ab6 100644
---- a/go.mod
-+++ b/go.mod
-@@ -1,6 +1,6 @@
- module github.com/oligo/gvcode
- 
--go 1.26
-+go 1.26.1
- 
- require (
- 	gioui.org v0.9.0
 diff --git a/gutter.go b/gutter.go
 index 6bcbb0c..3b39b60 100644
 --- a/gutter.go
