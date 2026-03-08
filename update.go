@@ -1,12 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ddkwork/golibrary/std/mylog"
 	"github.com/ddkwork/golibrary/std/stream"
@@ -39,12 +42,19 @@ func main() {
 		runModernizeCommands(gvcodeRepoDir)
 		applyPatches(gvcodeRepoDir, filepath.Join(root, "export_patch", "gvcode"))
 		fmt.Println("=== 更新 gvcode 依赖 ===")
-		os.WriteFile(filepath.Join(gvcodeRepoDir, "go.mod"), []byte(`
+		// 获取最新的 gio 版本
+		gioVersion := getLatestGioVersion()
+		os.WriteFile(filepath.Join(gvcodeRepoDir, "go.mod"), []byte(fmt.Sprintf(`
 module github.com/oligo/gvcode
 
 go 1.26.1
 
-`), 0o644)
+replace (
+	gioui.org v0.9.0 => github.com/ddkwork/gio %s
+	github.com/go-text/typesetting v0.3.3 => github.com/go-text/typesetting v0.3.0
+)
+
+`, gioVersion)), 0o644)
 		updateAllDeps(gvcodeRepoDir, false)
 		downgradeBugDeps(gvcodeRepoDir)
 		commitDepsChanges(gvcodeRepoDir)
@@ -125,6 +135,66 @@ func init() {
 	if GVCODE_UPSTREAM == "" {
 		GVCODE_UPSTREAM = "https://github.com/oligo/gvcode"
 	}
+}
+
+// getLatestGioVersion 获取 github.com/ddkwork/gio 的最新版本
+func getLatestGioVersion() string {
+	// 定义默认版本作为 fallback
+	defaultVersion := "v0.0.0-20260218025337-1d974afde6bb"
+
+	// 使用 GitHub API 获取 main 分支的最新信息
+	url := "https://api.github.com/repos/ddkwork/gio/branches/main"
+
+	// 配置 HTTP 客户端
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	// 发送 HTTP GET 请求
+	resp, err := client.Get(url)
+	if err != nil {
+		fmt.Printf("获取最新版本失败: %v\n", err)
+		return defaultVersion
+	}
+	defer resp.Body.Close()
+
+	// 检查请求是否成功
+	if resp.StatusCode != http.StatusOK {
+		fmt.Printf("GitHub API 请求失败，状态码: %d\n", resp.StatusCode)
+		return defaultVersion
+	}
+
+	// 解析响应 JSON
+	var branch struct {
+		Commit struct {
+			SHA    string `json:"sha"`
+			Commit struct {
+				Author struct {
+					Date string `json:"date"`
+				} `json:"author"`
+			} `json:"commit"`
+		} `json:"commit"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&branch); err != nil {
+		fmt.Printf("解析 GitHub API 响应失败: %v\n", err)
+		return defaultVersion
+	}
+
+	// 提取 SHA 和日期
+	sha := branch.Commit.SHA
+	date := branch.Commit.Commit.Author.Date
+
+	// 格式化为 YYYYMMDDHHMMSS
+	date = strings.ReplaceAll(date, "-", "")
+	date = strings.ReplaceAll(date, "T", "")
+	date = strings.ReplaceAll(date, ":", "")
+	date = strings.Split(date, ".")[0] // 移除毫秒部分
+
+	// 构建版本字符串
+	version := fmt.Sprintf("v0.0.0-%s-%s", date, sha[:12])
+	fmt.Printf("使用 GitHub API 获取的版本: %s\n", version)
+	return version
 }
 
 type Dependency struct {
