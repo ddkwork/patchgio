@@ -135,6 +135,7 @@ func downgradeBugDeps(repoDir string) {
 }
 
 func updateAllDeps(repoDir string, runTidy bool) {
+	return
 	if runTidy {
 		stream.RunCommandWithDir(repoDir, "go", "mod", "tidy")
 	}
