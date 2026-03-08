@@ -1,6 +1,6 @@
 module patchgio
 
-go 1.26
+go 1.26.1
 
 require github.com/ddkwork/golibrary v0.1.11
 

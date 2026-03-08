@@ -1,0 +1,3859 @@
+From 581c855385ba02db4749f5d0e0a87b0fa1198dff Mon Sep 17 00:00:00 2001
+From: Admin <2762713521@qq.com>
+Date: Sun, 8 Mar 2026 19:31:00 +0800
+Subject: [PATCH] feat(编辑器): 添加颜色指示器功能
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+在编辑器中实现颜色代码检测和可视化指示器功能：
+1. 新增颜色检测器组件，支持识别HEX/RGB/HSL等格式颜色代码
+2. 在编辑器侧边栏添加颜色指示器，点击可打开颜色选择器
+3. 实现颜色选择器与编辑器集成，支持修改颜色值并自动更新代码
+4. 添加相关测试用例和示例代码
+5. 更新go.mod依赖版本至1.26.1
+
+颜色指示器会在检测到的颜色代码旁显示色块，点击色块可打开颜色选择器修改颜色值，修改后会自动更新代码中的颜色值。
+---
+ colorpicker/color_detector.go           |  447 +++++++++
+ colorpicker/color_picker.go             | 1152 +++++++++++++++++++++++
+ colorpicker/color_preview.go            |  199 ++++
+ colorpicker/colorpicker_test.go         |  251 +++++
+ colorpicker/editor_integration.go       |  146 +++
+ colorpicker/example_test.go             |   41 +
+ editor.go                               |  117 ++-
+ example/main.go                         |  117 ++-
+ go.mod                                  |    2 +-
+ gutter.go                               |   47 +
+ gutter/gutter.go                        |   18 +
+ gutter/manager.go                       |    8 +
+ gutter/providers/colorindicator.go      |  509 ++++++++++
+ gutter/providers/colorindicator_test.go |  401 ++++++++
+ gutter/providers/runbutton.go           |   66 +-
+ option.go                               |   23 +
+ 16 files changed, 3525 insertions(+), 19 deletions(-)
+ create mode 100644 colorpicker/color_detector.go
+ create mode 100644 colorpicker/color_picker.go
+ create mode 100644 colorpicker/color_preview.go
+ create mode 100644 colorpicker/colorpicker_test.go
+ create mode 100644 colorpicker/editor_integration.go
+ create mode 100644 colorpicker/example_test.go
+ create mode 100644 gutter/providers/colorindicator.go
+ create mode 100644 gutter/providers/colorindicator_test.go
+
+diff --git a/colorpicker/color_detector.go b/colorpicker/color_detector.go
+new file mode 100644
+index 0000000..951a75b
+--- /dev/null
++++ b/colorpicker/color_detector.go
+@@ -0,0 +1,447 @@
++package colorpicker
++
++import (
++	"fmt"
++	"image/color"
++	"math"
++	"regexp"
++	"strconv"
++	"strings"
++)
++
++// ColorInfo 颜色信息
++type ColorInfo struct {
++	Color    color.NRGBA
++	Range    TextRange
++	Format   ColorFormat
++	Original string
++}
++
++// TextRange 文本范围
++type TextRange struct {
++	Start int
++	End   int
++}
++
++// ColorFormat 颜色格式
++type ColorFormat int
++
++const (
++	ColorFormatHex3 ColorFormat = iota
++	ColorFormatHex4
++	ColorFormatHex6
++	ColorFormatHex8
++	ColorFormatRGB
++	ColorFormatRGBA
++	ColorFormatHSL
++	ColorFormatHSLA
++	ColorFormatNamed
++)
++
++// ColorDetector 颜色检测器
++type ColorDetector struct {
++	hex3Regex   *regexp.Regexp
++	hex4Regex   *regexp.Regexp
++	hex6Regex   *regexp.Regexp
++	hex8Regex   *regexp.Regexp
++	rgbRegex    *regexp.Regexp
++	rgbaRegex   *regexp.Regexp
++	hslRegex    *regexp.Regexp
++	hslaRegex   *regexp.Regexp
++	namedColors map[string]color.NRGBA
++}
++
++// NewColorDetector 创建新的颜色检测器
++func NewColorDetector() *ColorDetector {
++	return &ColorDetector{
++		hex3Regex:   regexp.MustCompile(`#([0-9a-fA-F]{3})\b`),
++		hex4Regex:   regexp.MustCompile(`#([0-9a-fA-F]{4})\b`),
++		hex6Regex:   regexp.MustCompile(`#([0-9a-fA-F]{6})\b`),
++		hex8Regex:   regexp.MustCompile(`#([0-9a-fA-F]{8})\b`),
++		rgbRegex:    regexp.MustCompile(`(?i)rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)`),
++		rgbaRegex:   regexp.MustCompile(`(?i)rgba\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([0-9.]+)\s*\)`),
++		hslRegex:    regexp.MustCompile(`(?i)hsl\s*\(\s*(\d+)\s*,\s*(\d+)%\s*,\s*(\d+)%\s*\)`),
++		hslaRegex:   regexp.MustCompile(`(?i)hsla\s*\(\s*(\d+)\s*,\s*(\d+)%\s*,\s*(\d+)%\s*,\s*([0-9.]+)\s*\)`),
++		namedColors: getNamedColors(),
++	}
++}
++
++// DetectColors 检测文本中的所有颜色
++func (cd *ColorDetector) DetectColors(text string) []ColorInfo {
++	var colors []ColorInfo
++
++	colors = append(colors, cd.detectHexColors(text)...)
++	colors = append(colors, cd.detectRGBColors(text)...)
++	colors = append(colors, cd.detectHSLColors(text)...)
++	colors = append(colors, cd.detectNamedColors(text)...)
++
++	return colors
++}
++
++// detectHexColors 检测十六进制颜色
++func (cd *ColorDetector) detectHexColors(text string) []ColorInfo {
++	var colors []ColorInfo
++
++	matches := cd.hex8Regex.FindAllStringSubmatchIndex(text, -1)
++	for _, match := range matches {
++		hex := text[match[2]:match[3]]
++		if c, err := parseHexColor(hex); err == nil {
++			colors = append(colors, ColorInfo{
++				Color:    c,
++				Range:    TextRange{Start: match[0], End: match[1]},
++				Format:   ColorFormatHex8,
++				Original: text[match[0]:match[1]],
++			})
++		}
++	}
++
++	matches = cd.hex6Regex.FindAllStringSubmatchIndex(text, -1)
++	for _, match := range matches {
++		hex := text[match[2]:match[3]]
++		if c, err := parseHexColor(hex); err == nil {
++			colors = append(colors, ColorInfo{
++				Color:    c,
++				Range:    TextRange{Start: match[0], End: match[1]},
++				Format:   ColorFormatHex6,
++				Original: text[match[0]:match[1]],
++			})
++		}
++	}
++
++	matches = cd.hex4Regex.FindAllStringSubmatchIndex(text, -1)
++	for _, match := range matches {
++		hex := text[match[2]:match[3]]
++		if c, err := parseHexColor(hex); err == nil {
++			colors = append(colors, ColorInfo{
++				Color:    c,
++				Range:    TextRange{Start: match[0], End: match[1]},
++				Format:   ColorFormatHex4,
++				Original: text[match[0]:match[1]],
++			})
++		}
++	}
++
++	matches = cd.hex3Regex.FindAllStringSubmatchIndex(text, -1)
++	for _, match := range matches {
++		hex := text[match[2]:match[3]]
++		if c, err := parseHexColor(hex); err == nil {
++			colors = append(colors, ColorInfo{
++				Color:    c,
++				Range:    TextRange{Start: match[0], End: match[1]},
++				Format:   ColorFormatHex3,
++				Original: text[match[0]:match[1]],
++			})
++		}
++	}
++
++	return colors
++}
++
++// detectRGBColors 检测 RGB 颜色
++func (cd *ColorDetector) detectRGBColors(text string) []ColorInfo {
++	var colors []ColorInfo
++
++	matches := cd.rgbaRegex.FindAllStringSubmatchIndex(text, -1)
++	for _, match := range matches {
++		r, _ := strconv.Atoi(text[match[2]:match[3]])
++		g, _ := strconv.Atoi(text[match[4]:match[5]])
++		b, _ := strconv.Atoi(text[match[6]:match[7]])
++		a, _ := strconv.ParseFloat(text[match[8]:match[9]], 64)
++
++		colors = append(colors, ColorInfo{
++			Color: color.NRGBA{
++				R: uint8(r),
++				G: uint8(g),
++				B: uint8(b),
++				A: uint8(a * 255),
++			},
++			Range:    TextRange{Start: match[0], End: match[1]},
++			Format:   ColorFormatRGBA,
++			Original: text[match[0]:match[1]],
++		})
++	}
++
++	matches = cd.rgbRegex.FindAllStringSubmatchIndex(text, -1)
++	for _, match := range matches {
++		r, _ := strconv.Atoi(text[match[2]:match[3]])
++		g, _ := strconv.Atoi(text[match[4]:match[5]])
++		b, _ := strconv.Atoi(text[match[6]:match[7]])
++
++		colors = append(colors, ColorInfo{
++			Color: color.NRGBA{
++				R: uint8(r),
++				G: uint8(g),
++				B: uint8(b),
++				A: 255,
++			},
++			Range:    TextRange{Start: match[0], End: match[1]},
++			Format:   ColorFormatRGB,
++			Original: text[match[0]:match[1]],
++		})
++	}
++
++	return colors
++}
++
++// detectHSLColors 检测 HSL 颜色
++func (cd *ColorDetector) detectHSLColors(text string) []ColorInfo {
++	var colors []ColorInfo
++
++	matches := cd.hslaRegex.FindAllStringSubmatchIndex(text, -1)
++	for _, match := range matches {
++		h, _ := strconv.Atoi(text[match[2]:match[3]])
++		s, _ := strconv.Atoi(text[match[4]:match[5]])
++		l, _ := strconv.Atoi(text[match[6]:match[7]])
++		a, _ := strconv.ParseFloat(text[match[8]:match[9]], 64)
++
++		c := hslToNRGBA(float64(h)/360.0, float64(s)/100.0, float64(l)/100.0)
++		c.A = uint8(a * 255)
++
++		colors = append(colors, ColorInfo{
++			Color:    c,
++			Range:    TextRange{Start: match[0], End: match[1]},
++			Format:   ColorFormatHSLA,
++			Original: text[match[0]:match[1]],
++		})
++	}
++
++	matches = cd.hslRegex.FindAllStringSubmatchIndex(text, -1)
++	for _, match := range matches {
++		h, _ := strconv.Atoi(text[match[2]:match[3]])
++		s, _ := strconv.Atoi(text[match[4]:match[5]])
++		l, _ := strconv.Atoi(text[match[6]:match[7]])
++
++		c := hslToNRGBA(float64(h)/360.0, float64(s)/100.0, float64(l)/100.0)
++
++		colors = append(colors, ColorInfo{
++			Color:    c,
++			Range:    TextRange{Start: match[0], End: match[1]},
++			Format:   ColorFormatHSL,
++			Original: text[match[0]:match[1]],
++		})
++	}
++
++	return colors
++}
++
++// detectNamedColors 检测命名颜色
++func (cd *ColorDetector) detectNamedColors(text string) []ColorInfo {
++	var colors []ColorInfo
++
++	for name, c := range cd.namedColors {
++		index := 0
++		for {
++			pos := strings.Index(text[index:], name)
++			if pos == -1 {
++				break
++			}
++			pos += index
++
++			start := pos
++			end := pos + len(name)
++
++			if (start == 0 || !isAlphaNum(text[start-1])) &&
++				(end == len(text) || !isAlphaNum(text[end])) {
++				colors = append(colors, ColorInfo{
++					Color:    c,
++					Range:    TextRange{Start: start, End: end},
++					Format:   ColorFormatNamed,
++					Original: text[start:end],
++				})
++			}
++
++			index = end
++		}
++	}
++
++	return colors
++}
++
++// parseHexColor 解析十六进制颜色
++func parseHexColor(hex string) (color.NRGBA, error) {
++	var r, g, b, a uint8
++	a = 255
++
++	switch len(hex) {
++	case 3:
++		r = parseHexDigit(hex[0]) * 17
++		g = parseHexDigit(hex[1]) * 17
++		b = parseHexDigit(hex[2]) * 17
++	case 4:
++		r = parseHexDigit(hex[0]) * 17
++		g = parseHexDigit(hex[1]) * 17
++		b = parseHexDigit(hex[2]) * 17
++		a = parseHexDigit(hex[3]) * 17
++	case 6:
++		r = parseHexDigit(hex[0])<<4 | parseHexDigit(hex[1])
++		g = parseHexDigit(hex[2])<<4 | parseHexDigit(hex[3])
++		b = parseHexDigit(hex[4])<<4 | parseHexDigit(hex[5])
++	case 8:
++		r = parseHexDigit(hex[0])<<4 | parseHexDigit(hex[1])
++		g = parseHexDigit(hex[2])<<4 | parseHexDigit(hex[3])
++		b = parseHexDigit(hex[4])<<4 | parseHexDigit(hex[5])
++		a = parseHexDigit(hex[6])<<4 | parseHexDigit(hex[7])
++	default:
++		return color.NRGBA{}, nil
++	}
++
++	return color.NRGBA{R: r, G: g, B: b, A: a}, nil
++}
++
++// parseHexDigit 解析十六进制数字
++func parseHexDigit(c byte) uint8 {
++	switch {
++	case '0' <= c && c <= '9':
++		return c - '0'
++	case 'a' <= c && c <= 'f':
++		return c - 'a' + 10
++	case 'A' <= c && c <= 'F':
++		return c - 'A' + 10
++	default:
++		return 0
++	}
++}
++
++// hslToNRGBA 将 HSL 转换为 NRGBA
++func hslToNRGBA(h, s, l float64) color.NRGBA {
++	var r, g, b float64
++
++	if s == 0 {
++		r = l
++		g = l
++		b = l
++	} else {
++		var hue2rgb func(p, q, t float64) float64
++		hue2rgb = func(p, q, t float64) float64 {
++			if t < 0 {
++				t += 1
++			}
++			if t > 1 {
++				t -= 1
++			}
++			if t < 1.0/6.0 {
++				return p + (q-p)*6*t
++			}
++			if t < 1.0/2.0 {
++				return q
++			}
++			if t < 2.0/3.0 {
++				return p + (q-p)*(2.0/3.0-t)*6
++			}
++			return p
++		}
++
++		var q float64
++		if l < 0.5 {
++			q = l * (1 + s)
++		} else {
++			q = l + s - l*s
++		}
++		p := 2*l - q
++
++		r = hue2rgb(p, q, h+1.0/3.0)
++		g = hue2rgb(p, q, h)
++		b = hue2rgb(p, q, h-1.0/3.0)
++	}
++
++	return color.NRGBA{
++		R: uint8(r * 255),
++		G: uint8(g * 255),
++		B: uint8(b * 255),
++		A: 255,
++	}
++}
++
++// isAlphaNum 检查字符是否为字母或数字
++func isAlphaNum(c byte) bool {
++	return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9')
++}
++
++// getNamedColors 获取命名颜色映射
++func getNamedColors() map[string]color.NRGBA {
++	return map[string]color.NRGBA{
++		"black":   {R: 0, G: 0, B: 0, A: 255},
++		"white":   {R: 255, G: 255, B: 255, A: 255},
++		"red":     {R: 255, G: 0, B: 0, A: 255},
++		"green":   {R: 0, G: 128, B: 0, A: 255},
++		"blue":    {R: 0, G: 0, B: 255, A: 255},
++		"yellow":  {R: 255, G: 255, B: 0, A: 255},
++		"cyan":    {R: 0, G: 255, B: 255, A: 255},
++		"magenta": {R: 255, G: 0, B: 255, A: 255},
++		"gray":    {R: 128, G: 128, B: 128, A: 255},
++		"grey":    {R: 128, G: 128, B: 128, A: 255},
++		"orange":  {R: 255, G: 165, B: 0, A: 255},
++		"pink":    {R: 255, G: 192, B: 203, A: 255},
++		"purple":  {R: 128, G: 0, B: 128, A: 255},
++		"brown":   {R: 165, G: 42, B: 42, A: 255},
++		"lime":    {R: 0, G: 255, B: 0, A: 255},
++		"navy":    {R: 0, G: 0, B: 128, A: 255},
++		"teal":    {R: 0, G: 128, B: 128, A: 255},
++		"olive":   {R: 128, G: 128, B: 0, A: 255},
++		"maroon":  {R: 128, G: 0, B: 0, A: 255},
++		"aqua":    {R: 0, G: 255, B: 255, A: 255},
++		"fuchsia": {R: 255, G: 0, B: 255, A: 255},
++		"silver":  {R: 192, G: 192, B: 192, A: 255},
++	}
++}
++
++// FormatColorToString 将颜色格式化为字符串
++func (ci *ColorInfo) FormatColorToString() string {
++	switch ci.Format {
++	case ColorFormatHex3, ColorFormatHex4, ColorFormatHex6, ColorFormatHex8:
++		return rgbToHex(ci.Color.R, ci.Color.G, ci.Color.B)
++	case ColorFormatRGB:
++		return fmt.Sprintf("rgb(%d, %d, %d)", ci.Color.R, ci.Color.G, ci.Color.B)
++	case ColorFormatRGBA:
++		return fmt.Sprintf("rgba(%d, %d, %d, %.2f)", ci.Color.R, ci.Color.G, ci.Color.B, float64(ci.Color.A)/255.0)
++	case ColorFormatHSL:
++		h, s, l := nrgbaToHSL(ci.Color)
++		return fmt.Sprintf("hsl(%d, %d%%, %d%%)", int(h*360), int(s*100), int(l*100))
++	case ColorFormatHSLA:
++		h, s, l := nrgbaToHSL(ci.Color)
++		return fmt.Sprintf("hsla(%d, %d%%, %d%%, %.2f)", int(h*360), int(s*100), int(l*100), float64(ci.Color.A)/255.0)
++	case ColorFormatNamed:
++		return ci.Original
++	default:
++		return rgbToHex(ci.Color.R, ci.Color.G, ci.Color.B)
++	}
++}
++
++// nrgbaToHSL 将 NRGBA 转换为 HSL
++func nrgbaToHSL(c color.NRGBA) (h, s, l float64) {
++	r := float64(c.R) / 255.0
++	g := float64(c.G) / 255.0
++	b := float64(c.B) / 255.0
++
++	max := math.Max(r, math.Max(g, b))
++	min := math.Min(r, math.Min(g, b))
++	delta := max - min
++
++	l = (max + min) / 2.0
++
++	if delta == 0 {
++		h = 0
++		s = 0
++	} else {
++		if l < 0.5 {
++			s = delta / (max + min)
++		} else {
++			s = delta / (2.0 - max - min)
++		}
++
++		switch max {
++		case r:
++			h = (g - b) / delta
++			if g < b {
++				h += 6
++			}
++		case g:
++			h = (b-r)/delta + 2
++		case b:
++			h = (r-g)/delta + 4
++		}
++		h /= 6.0
++	}
++
++	return h, s, l
++}
+diff --git a/colorpicker/color_picker.go b/colorpicker/color_picker.go
+new file mode 100644
+index 0000000..70a1cf7
+--- /dev/null
++++ b/colorpicker/color_picker.go
+@@ -0,0 +1,1152 @@
++package colorpicker
++
++import (
++	"fmt"
++	"image"
++	"image/color"
++	"math"
++
++	"gioui.org/io/pointer"
++	"gioui.org/layout"
++	"gioui.org/op/clip"
++	"gioui.org/op/paint"
++	"gioui.org/unit"
++	"gioui.org/widget"
++	"gioui.org/widget/material"
++)
++
++// hslToRGB 将 HSL 转换为 RGB
++func hslToRGB(h, s, l float64) (r, g, b float64) {
++	if s == 0 {
++		r = l
++		g = l
++		b = l
++		return
++	}
++
++	var hue2rgb func(p, q, t float64) float64
++	hue2rgb = func(p, q, t float64) float64 {
++		if t < 0 {
++			t += 1
++		}
++		if t > 1 {
++			t -= 1
++		}
++		if t < 1.0/6.0 {
++			return p + (q-p)*6*t
++		}
++		if t < 1.0/2.0 {
++			return q
++		}
++		if t < 2.0/3.0 {
++			return p + (q-p)*(2.0/3.0-t)*6
++		}
++		return p
++	}
++
++	var q float64
++	if l < 0.5 {
++		q = l * (1.0 + s)
++	} else {
++		q = l + s - l*s
++	}
++	p := 2.0*l - q
++
++	r = hue2rgb(p, q, h+1.0/3.0)
++	g = hue2rgb(p, q, h)
++	b = hue2rgb(p, q, h-1.0/3.0)
++	return
++}
++
++// ColorPickerState 颜色选择器状态
++type ColorPickerState struct {
++	SelectedColor color.NRGBA
++	Red           uint8
++	Green         uint8
++	Blue          uint8
++	Alpha         uint8
++	Hue           float64
++	Saturation    float64
++	Lightness     float64
++	HexInput      string
++	IsOpen        bool
++}
++
++// NewColorPickerState 创建新的颜色选择器状态
++func NewColorPickerState(initialColor color.NRGBA) *ColorPickerState {
++	state := &ColorPickerState{
++		SelectedColor: initialColor,
++		Red:           initialColor.R,
++		Green:         initialColor.G,
++		Blue:          initialColor.B,
++		Alpha:         initialColor.A,
++		HexInput:      rgbToHex(initialColor.R, initialColor.G, initialColor.B),
++	}
++	state.updateHSL()
++	return state
++}
++
++// updateHSL 从 RGB 更新 HSL 值
++func (s *ColorPickerState) updateHSL() {
++	r := float64(s.Red) / 255.0
++	g := float64(s.Green) / 255.0
++	b := float64(s.Blue) / 255.0
++
++	max := math.Max(r, math.Max(g, b))
++	min := math.Min(r, math.Min(g, b))
++	delta := max - min
++
++	s.Lightness = (max + min) / 2.0
++
++	if delta == 0 {
++		s.Hue = 0
++		s.Saturation = 0
++	} else {
++		if s.Lightness < 0.5 {
++			s.Saturation = delta / (max + min)
++		} else {
++			s.Saturation = delta / (2.0 - max - min)
++		}
++
++		var hue float64
++		switch max {
++		case r:
++			hue = (g - b) / delta
++			if g < b {
++				hue += 6
++			}
++		case g:
++			hue = (b-r)/delta + 2
++		case b:
++			hue = (r-g)/delta + 4
++		}
++		s.Hue = hue / 6.0
++	}
++}
++
++// updateRGB 从 HSL 更新 RGB 值
++func (s *ColorPickerState) updateRGB() {
++	var r, g, b float64
++
++	if s.Saturation == 0 {
++		r = s.Lightness
++		g = s.Lightness
++		b = s.Lightness
++	} else {
++		var hue2rgb func(p, q, t float64) float64
++		hue2rgb = func(p, q, t float64) float64 {
++			if t < 0 {
++				t += 1
++			}
++			if t > 1 {
++				t -= 1
++			}
++			if t < 1.0/6.0 {
++				return p + (q-p)*6*t
++			}
++			if t < 1.0/2.0 {
++				return q
++			}
++			if t < 2.0/3.0 {
++				return p + (q-p)*(2.0/3.0-t)*6
++			}
++			return p
++		}
++
++		var q float64
++		if s.Lightness < 0.5 {
++			q = s.Lightness * (1.0 + s.Saturation)
++		} else {
++			q = s.Lightness + s.Saturation - s.Lightness*s.Saturation
++		}
++		p := 2.0*s.Lightness - q
++
++		r = hue2rgb(p, q, s.Hue+1.0/3.0)
++		g = hue2rgb(p, q, s.Hue)
++		b = hue2rgb(p, q, s.Hue-1.0/3.0)
++	}
++
++	s.Red = uint8(r * 255.0)
++	s.Green = uint8(g * 255.0)
++	s.Blue = uint8(b * 255.0)
++	s.SelectedColor = color.NRGBA{
++		R: s.Red,
++		G: s.Green,
++		B: s.Blue,
++		A: s.Alpha,
++	}
++	s.HexInput = rgbToHex(s.Red, s.Green, s.Blue)
++}
++
++// SetRGB 设置 RGB 值
++func (s *ColorPickerState) SetRGB(r, g, b uint8) {
++	s.Red = r
++	s.Green = g
++	s.Blue = b
++	s.SelectedColor = color.NRGBA{
++		R: s.Red,
++		G: s.Green,
++		B: s.Blue,
++		A: s.Alpha,
++	}
++	s.updateHSL()
++}
++
++// SetHSL 设置 HSL 值
++func (s *ColorPickerState) SetHSL(h, sat, l float64) {
++	s.Hue = h
++	s.Saturation = sat
++	s.Lightness = l
++	s.updateRGB()
++}
++
++// SetAlpha 设置 Alpha 值
++func (s *ColorPickerState) SetAlpha(a uint8) {
++	s.Alpha = a
++	s.SelectedColor = color.NRGBA{
++		R: s.Red,
++		G: s.Green,
++		B: s.Blue,
++		A: s.Alpha,
++	}
++}
++
++// rgbToHex 将 RGB 转换为十六进制字符串
++func rgbToHex(r, g, b uint8) string {
++	return string([]byte{
++		'#',
++		hexChar(r >> 4),
++		hexChar(r & 0x0F),
++		hexChar(g >> 4),
++		hexChar(g & 0x0F),
++		hexChar(b >> 4),
++		hexChar(b & 0x0F),
++	})
++}
++
++// hexChar 将 0-15 转换为十六进制字符
++func hexChar(v uint8) byte {
++	if v < 10 {
++		return '0' + v
++	}
++	return 'A' + v - 10
++}
++
++// hexToRGB 将十六进制字符串转换为 RGB
++func hexToRGB(hex string) (r, g, b uint8, err error) {
++	if len(hex) == 0 || hex[0] != '#' {
++		return 0, 0, 0, fmt.Errorf("hex string must start with #")
++	}
++	hex = hex[1:]
++
++	var parseHex func(s string) (uint8, error)
++	parseHex = func(s string) (uint8, error) {
++		var v uint8
++		for _, c := range s {
++			v <<= 4
++			switch {
++			case '0' <= c && c <= '9':
++				v |= uint8(c - '0')
++			case 'a' <= c && c <= 'f':
++				v |= uint8(c - 'a' + 10)
++			case 'A' <= c && c <= 'F':
++				v |= uint8(c - 'A' + 10)
++			default:
++				return 0, fmt.Errorf("invalid hex character: %c", c)
++			}
++		}
++		return v, nil
++	}
++
++	switch len(hex) {
++	case 3:
++		r, err = parseHex(string([]byte{hex[0], hex[0]}))
++		if err != nil {
++			return 0, 0, 0, err
++		}
++		g, err = parseHex(string([]byte{hex[1], hex[1]}))
++		if err != nil {
++			return 0, 0, 0, err
++		}
++		b, err = parseHex(string([]byte{hex[2], hex[2]}))
++		if err != nil {
++			return 0, 0, 0, err
++		}
++	case 6:
++		r, err = parseHex(hex[0:2])
++		if err != nil {
++			return 0, 0, 0, err
++		}
++		g, err = parseHex(hex[2:4])
++		if err != nil {
++			return 0, 0, 0, err
++		}
++		b, err = parseHex(hex[4:6])
++		if err != nil {
++			return 0, 0, 0, err
++		}
++	default:
++		return 0, 0, 0, fmt.Errorf("hex string must be 3 or 6 characters long")
++	}
++
++	return r, g, b, nil
++}
++
++// ColorPicker 颜色选择器组件
++type ColorPicker struct {
++	State *ColorPickerState
++
++	RedSlider   *widget.Float
++	GreenSlider *widget.Float
++	BlueSlider  *widget.Float
++	AlphaSlider *widget.Float
++	HueSlider   *widget.Float
++	SatSlider   *widget.Float
++	LightSlider *widget.Float
++	HexEditor   *widget.Editor
++
++	// Color selection area
++	colorArea widget.Clickable
++
++	// History colors
++	HistoryColors []color.NRGBA
++
++	// 256 color palette
++	ColorPalette []color.NRGBA
++
++	// Color palette clickables
++	PaletteClickables []widget.Clickable
++	HistoryClickables []widget.Clickable
++
++	// Color history for undo functionality
++	ColorHistory []color.NRGBA
++	HistoryIndex int
++
++	// Action buttons
++	ConfirmButton widget.Clickable
++	CancelButton  widget.Clickable
++	UndoButton    widget.Clickable
++
++	// Callback for confirm action
++	OnConfirm func()
++}
++
++// NewColorPicker 创建新的颜色选择器
++func NewColorPicker(initialColor color.NRGBA) *ColorPicker {
++	state := NewColorPickerState(initialColor)
++
++	// Create 256 color palette
++	palette := create256ColorPalette()
++
++	// Initialize clickables
++	paletteClickables := make([]widget.Clickable, len(palette))
++	historyClickables := make([]widget.Clickable, 9) // 9 history colors
++
++	// Initialize color history with initial color
++	colorHistory := []color.NRGBA{initialColor}
++
++	return &ColorPicker{
++		State:       state,
++		RedSlider:   &widget.Float{Value: float32(initialColor.R)},
++		GreenSlider: &widget.Float{Value: float32(initialColor.G)},
++		BlueSlider:  &widget.Float{Value: float32(initialColor.B)},
++		AlphaSlider: &widget.Float{Value: float32(initialColor.A)},
++		HueSlider:   &widget.Float{Value: float32(state.Hue)},
++		SatSlider:   &widget.Float{Value: float32(state.Saturation)},
++		LightSlider: &widget.Float{Value: float32(state.Lightness)},
++		HexEditor:   &widget.Editor{SingleLine: true, Submit: true},
++		HistoryColors: []color.NRGBA{
++			color.NRGBA{R: 255, G: 0, B: 0, A: 255},     // Red
++			color.NRGBA{R: 0, G: 255, B: 0, A: 255},     // Green
++			color.NRGBA{R: 0, G: 0, B: 255, A: 255},     // Blue
++			color.NRGBA{R: 255, G: 255, B: 0, A: 255},   // Yellow
++			color.NRGBA{R: 255, G: 0, B: 255, A: 255},   // Magenta
++			color.NRGBA{R: 0, G: 255, B: 255, A: 255},   // Cyan
++			color.NRGBA{R: 128, G: 128, B: 128, A: 255}, // Gray
++			color.NRGBA{R: 0, G: 0, B: 0, A: 255},       // Black
++			color.NRGBA{R: 255, G: 255, B: 255, A: 255}, // White
++		},
++		ColorPalette:      palette,
++		PaletteClickables: paletteClickables,
++		HistoryClickables: historyClickables,
++		ColorHistory:      colorHistory,
++		HistoryIndex:      0,
++	}
++}
++
++// create256ColorPalette 创建256色选择面板
++func create256ColorPalette() []color.NRGBA {
++	var palette []color.NRGBA
++
++	// Basic colors
++	basicColors := []color.NRGBA{
++		color.NRGBA{R: 0, G: 0, B: 0, A: 255},       // Black
++		color.NRGBA{R: 128, G: 0, B: 0, A: 255},     // Dark Red
++		color.NRGBA{R: 0, G: 128, B: 0, A: 255},     // Dark Green
++		color.NRGBA{R: 128, G: 128, B: 0, A: 255},   // Dark Yellow
++		color.NRGBA{R: 0, G: 0, B: 128, A: 255},     // Dark Blue
++		color.NRGBA{R: 128, G: 0, B: 128, A: 255},   // Dark Magenta
++		color.NRGBA{R: 0, G: 128, B: 128, A: 255},   // Dark Cyan
++		color.NRGBA{R: 192, G: 192, B: 192, A: 255}, // Light Gray
++		color.NRGBA{R: 128, G: 128, B: 128, A: 255}, // Gray
++		color.NRGBA{R: 255, G: 0, B: 0, A: 255},     // Red
++		color.NRGBA{R: 0, G: 255, B: 0, A: 255},     // Green
++		color.NRGBA{R: 255, G: 255, B: 0, A: 255},   // Yellow
++		color.NRGBA{R: 0, G: 0, B: 255, A: 255},     // Blue
++		color.NRGBA{R: 255, G: 0, B: 255, A: 255},   // Magenta
++		color.NRGBA{R: 0, G: 255, B: 255, A: 255},   // Cyan
++		color.NRGBA{R: 255, G: 255, B: 255, A: 255}, // White
++	}
++	palette = append(palette, basicColors...)
++
++	// Grayscale
++	for i := range 16 {
++		gray := uint8(i * 16)
++		palette = append(palette, color.NRGBA{R: gray, G: gray, B: gray, A: 255})
++	}
++
++	// Color gradients
++	for r := range 4 {
++		for g := range 4 {
++			for b := range 4 {
++				palette = append(palette, color.NRGBA{
++					R: uint8(r * 85),
++					G: uint8(g * 85),
++					B: uint8(b * 85),
++					A: 255,
++				})
++			}
++		}
++	}
++
++	// More color variations
++	for h := 0; h < 360; h += 30 {
++		for s := 1; s <= 3; s++ {
++			for l := 1; l <= 3; l++ {
++				r, g, b := hslToRGB(float64(h)/360.0, float64(s)/3.0, float64(l)/4.0)
++				palette = append(palette, color.NRGBA{
++					R: uint8(r * 255),
++					G: uint8(g * 255),
++					B: uint8(b * 255),
++					A: 255,
++				})
++			}
++		}
++	}
++
++	// Limit to 256 colors
++	if len(palette) > 256 {
++		palette = palette[:256]
++	}
++
++	return palette
++}
++
++// Layout 渲染颜色选择器
++func (cp *ColorPicker) Layout(gtx layout.Context, th *material.Theme) layout.Dimensions {
++	// Set maximum width and height for the picker to match VS Code style
++	maxWidth := gtx.Dp(unit.Dp(280))
++	maxHeight := gtx.Dp(unit.Dp(700))
++
++	gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, maxWidth)
++	gtx.Constraints.Max.Y = min(gtx.Constraints.Max.Y, maxHeight)
++
++	// Register pointer events for the entire picker area
++	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
++
++	// Draw background with rounded corners (VS Code style)
++	backgroundColor := color.NRGBA{R: 48, G: 48, B: 48, A: 255}
++	bounds := image.Rectangle{Max: gtx.Constraints.Max}
++	roundedRect := clip.RRect{Rect: bounds, SE: 8, SW: 8, NE: 8, NW: 8}
++	backgroundStack := roundedRect.Push(gtx.Ops)
++	paint.Fill(gtx.Ops, backgroundColor)
++	backgroundStack.Pop()
++
++	// Draw border
++	borderColor := color.NRGBA{R: 80, G: 80, B: 80, A: 255}
++	borderRect := image.Rectangle{
++		Min: image.Point{X: 0, Y: 0},
++		Max: gtx.Constraints.Max,
++	}
++	paint.FillShape(gtx.Ops, borderColor, clip.Stroke{Path: clip.RRect{Rect: borderRect, SE: 8, SW: 8, NE: 8, NW: 8}.Path(gtx.Ops), Width: 1}.Op())
++
++	return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
++		fmt.Printf("[ColorPicker] Layout called with constraints: %v\n", gtx.Constraints)
++		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Start, Spacing: layout.SpaceEnd}.Layout(gtx,
++			// Color preview area
++			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++				return cp.layoutColorPreview(gtx)
++			}),
++
++			// Color selection area and hue slider
++			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Start}.Layout(gtx,
++					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++						return cp.layoutColorSelection(gtx)
++					}),
++					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++						return cp.layoutHueSlider(gtx, th)
++					}),
++				)
++			}),
++
++			// History colors
++			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++				return cp.layoutHistoryColors(gtx)
++			}),
++
++			// 256 color palette (smaller version)
++			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++				return cp.layoutColorPalette(gtx)
++			}),
++
++			// HEX input
++			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++				return cp.layoutHexInput(gtx, th)
++			}),
++
++			// Action buttons
++			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.End}.Layout(gtx,
++					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++						btn := material.Button(th, &cp.UndoButton, "Undo")
++						btn.Background = color.NRGBA{R: 60, G: 60, B: 60, A: 255}
++						btn.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255}
++						return btn.Layout(gtx)
++					}),
++					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++						fmt.Printf("[ColorPicker] Rendering Apply button\n")
++						btn := material.Button(th, &cp.ConfirmButton, "Apply")
++						btn.Background = color.NRGBA{R: 0, G: 120, B: 215, A: 255}
++						btn.Color = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
++						dims := btn.Layout(gtx)
++						fmt.Printf("[ColorPicker] Apply button rendered: dims=%v\n", dims)
++						return dims
++					}),
++				)
++			}),
++		)
++	})
++}
++
++// layoutColorPreview 渲染颜色预览
++func (cp *ColorPicker) layoutColorPreview(gtx layout.Context) layout.Dimensions {
++	previewHeight := gtx.Dp(unit.Dp(40))
++	paint.FillShape(gtx.Ops, cp.State.SelectedColor, clip.Rect(image.Rectangle{
++		Max: image.Point{X: gtx.Constraints.Max.X, Y: previewHeight},
++	}).Op())
++	return layout.Dimensions{Size: image.Point{X: gtx.Constraints.Max.X, Y: previewHeight}}
++}
++
++// layoutColorSelection 渲染颜色选择区域
++func (cp *ColorPicker) layoutColorSelection(gtx layout.Context) layout.Dimensions {
++	selectionSize := gtx.Dp(unit.Dp(140))
++	bounds := image.Rectangle{Max: image.Point{X: selectionSize, Y: selectionSize}}
++
++	// Draw color gradient with rounded corners (VS Code style)
++	roundedRect := clip.RRect{Rect: bounds, SE: 4, SW: 4, NE: 4, NW: 4}
++	roundedStack := roundedRect.Push(gtx.Ops)
++
++	// Draw a simplified gradient - use larger blocks instead of individual pixels
++	resolution := 14 // Use 14x14 grid instead of 140x140
++	blockSize := selectionSize / resolution
++
++	// Draw color gradient with larger blocks
++	for y := range resolution {
++		lightness := float64(y) / float64(resolution)
++		for x := range resolution {
++			saturation := float64(x) / float64(resolution)
++			r, g, b := hslToRGB(float64(cp.HueSlider.Value), saturation, lightness)
++			col := color.NRGBA{
++				R: uint8(r * 255),
++				G: uint8(g * 255),
++				B: uint8(b * 255),
++				A: 255,
++			}
++			blockRect := image.Rectangle{
++				Min: image.Point{X: x * blockSize, Y: y * blockSize},
++				Max: image.Point{X: (x + 1) * blockSize, Y: (y + 1) * blockSize},
++			}
++			paint.FillShape(gtx.Ops, col, clip.Rect(blockRect).Op())
++		}
++	}
++
++	roundedStack.Pop()
++
++	// Handle click events
++	if cp.colorArea.Clicked(gtx) {
++		// For simplicity, we'll just use the center of the color area
++		// In a real implementation, we would track the actual pointer position
++		saturation := 0.5
++		lightness := 0.5
++		r, g, b := hslToRGB(float64(cp.HueSlider.Value), saturation, lightness)
++		cp.State.Red = uint8(r * 255)
++		cp.State.Green = uint8(g * 255)
++		cp.State.Blue = uint8(b * 255)
++		cp.State.updateHSL()
++		cp.RedSlider.Value = float32(cp.State.Red)
++		cp.GreenSlider.Value = float32(cp.State.Green)
++		cp.BlueSlider.Value = float32(cp.State.Blue)
++		cp.SatSlider.Value = float32(cp.State.Saturation)
++		cp.LightSlider.Value = float32(cp.State.Lightness)
++		cp.State.HexInput = rgbToHex(cp.State.Red, cp.State.Green, cp.State.Blue)
++	}
++
++	// Register clickable area
++	pointer.CursorPointer.Add(gtx.Ops)
++	cp.colorArea.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
++		return layout.Dimensions{Size: image.Point{X: selectionSize, Y: selectionSize}}
++	})
++	roundedRect.Push(gtx.Ops).Pop()
++
++	// Draw selection marker (VS Code style)
++	if cp.State.Saturation > 0 && cp.State.Lightness > 0 {
++		markerX := int(float64(selectionSize) * cp.State.Saturation)
++		markerY := int(float64(selectionSize) * cp.State.Lightness)
++		markerSize := gtx.Dp(unit.Dp(10))
++
++		// Draw crosshair marker
++		crossSize := gtx.Dp(unit.Dp(16))
++
++		// Horizontal line
++		horizontalLine := image.Rectangle{
++			Min: image.Point{X: markerX - crossSize/2, Y: markerY},
++			Max: image.Point{X: markerX + crossSize/2, Y: markerY + 1},
++		}
++		paint.FillShape(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 255}, clip.Rect(horizontalLine).Op())
++
++		// Vertical line
++		verticalLine := image.Rectangle{
++			Min: image.Point{X: markerX, Y: markerY - crossSize/2},
++			Max: image.Point{X: markerX + 1, Y: markerY + crossSize/2},
++		}
++		paint.FillShape(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 255}, clip.Rect(verticalLine).Op())
++
++		// Black border for crosshair
++		horizontalLineBorder := image.Rectangle{
++			Min: image.Point{X: markerX - crossSize/2 - 1, Y: markerY - 1},
++			Max: image.Point{X: markerX + crossSize/2 + 1, Y: markerY + 2},
++		}
++		paint.FillShape(gtx.Ops, color.NRGBA{R: 0, G: 0, B: 0, A: 255}, clip.Rect(horizontalLineBorder).Op())
++
++		verticalLineBorder := image.Rectangle{
++			Min: image.Point{X: markerX - 1, Y: markerY - crossSize/2 - 1},
++			Max: image.Point{X: markerX + 2, Y: markerY + crossSize/2 + 1},
++		}
++		paint.FillShape(gtx.Ops, color.NRGBA{R: 0, G: 0, B: 0, A: 255}, clip.Rect(verticalLineBorder).Op())
++
++		// Center circle - use simple rectangle instead
++		markerRect := image.Rectangle{
++			Min: image.Point{X: markerX - markerSize/2, Y: markerY - markerSize/2},
++			Max: image.Point{X: markerX + markerSize/2, Y: markerY + markerSize/2},
++		}
++		markerStack := clip.Rect(markerRect).Push(gtx.Ops)
++		paint.Fill(gtx.Ops, color.NRGBA{255, 255, 255, 255})
++		markerStack.Pop()
++
++		// Draw black border
++		borderRect := image.Rectangle{
++			Min: image.Point{X: markerX - markerSize/2 - 1, Y: markerY - markerSize/2 - 1},
++			Max: image.Point{X: markerX + markerSize/2 + 1, Y: markerY + markerSize/2 + 1},
++		}
++		borderStack := clip.Rect(borderRect).Push(gtx.Ops)
++		paint.Fill(gtx.Ops, color.NRGBA{0, 0, 0, 255})
++		borderStack.Pop()
++	}
++
++	return layout.Dimensions{Size: image.Point{X: selectionSize, Y: selectionSize}}
++}
++
++// layoutHueSlider 渲染色相滑块
++func (cp *ColorPicker) layoutHueSlider(gtx layout.Context, th *material.Theme) layout.Dimensions {
++	sliderWidth := gtx.Dp(unit.Dp(20))
++	sliderHeight := gtx.Dp(unit.Dp(140))
++	bounds := image.Rectangle{Max: image.Point{X: sliderWidth, Y: sliderHeight}}
++
++	// Draw hue gradient with rounded corners (VS Code style)
++	roundedRect := clip.RRect{Rect: bounds, SE: 4, SW: 4, NE: 4, NW: 4}
++	roundedStack := roundedRect.Push(gtx.Ops)
++
++	// Draw hue gradient with simplified blocks
++	resolution := 14
++	blockHeight := sliderHeight / resolution
++
++	for y := range resolution {
++		hue := float64(y) / float64(resolution)
++		r, g, b := hslToRGB(hue, 1.0, 0.5)
++		col := color.NRGBA{
++			R: uint8(r * 255),
++			G: uint8(g * 255),
++			B: uint8(b * 255),
++			A: 255,
++		}
++		blockRect := image.Rectangle{
++			Min: image.Point{X: 0, Y: y * blockHeight},
++			Max: image.Point{X: sliderWidth, Y: (y + 1) * blockHeight},
++		}
++		paint.FillShape(gtx.Ops, col, clip.Rect(blockRect).Op())
++	}
++
++	roundedStack.Pop()
++
++	// Update hue slider
++	if cp.HueSlider.Update(gtx) {
++		cp.State.Hue = float64(cp.HueSlider.Value)
++		cp.State.updateRGB()
++		cp.RedSlider.Value = float32(cp.State.Red)
++		cp.GreenSlider.Value = float32(cp.State.Green)
++		cp.BlueSlider.Value = float32(cp.State.Blue)
++		cp.SatSlider.Value = float32(cp.State.Saturation)
++		cp.LightSlider.Value = float32(cp.State.Lightness)
++		cp.State.HexInput = rgbToHex(cp.State.Red, cp.State.Green, cp.State.Blue)
++	}
++
++	// Draw hue selection marker (VS Code style)
++	markerY := int(float64(sliderHeight) * cp.State.Hue)
++	markerSize := gtx.Dp(unit.Dp(12))
++
++	// White inner rectangle
++	markerRect := image.Rectangle{
++		Min: image.Point{X: 0, Y: markerY - markerSize/2},
++		Max: image.Point{X: markerSize, Y: markerY + markerSize/2},
++	}
++	markerStack := clip.Rect(markerRect).Push(gtx.Ops)
++	paint.Fill(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 255})
++	markerStack.Pop()
++
++	// Black border
++	borderRect := image.Rectangle{
++		Min: image.Point{X: -1, Y: markerY - markerSize/2 - 1},
++		Max: image.Point{X: markerSize + 1, Y: markerY + markerSize/2 + 1},
++	}
++	borderStack := clip.Rect(borderRect).Push(gtx.Ops)
++	paint.Fill(gtx.Ops, color.NRGBA{R: 0, G: 0, B: 0, A: 255})
++	borderStack.Pop()
++
++	// Layout slider with proper spacing (VS Code style)
++	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++		return layout.Inset{Left: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
++			gtx.Constraints.Max.X = sliderWidth
++			gtx.Constraints.Max.Y = sliderHeight
++			return material.Slider(th, cp.HueSlider).Layout(gtx)
++		})
++	}))
++}
++
++// layoutHistoryColors 渲染历史颜色
++func (cp *ColorPicker) layoutHistoryColors(gtx layout.Context) layout.Dimensions {
++	colorSize := gtx.Dp(unit.Dp(20))
++	spacing := gtx.Dp(unit.Dp(4))
++	rowSize := 8 // 8 colors per row
++
++	var children []layout.FlexChild
++	clickablesLen := len(cp.HistoryClickables)
++	for i, historyColor := range cp.HistoryColors {
++		if i >= clickablesLen {
++			break
++		}
++		if i > 0 && i%rowSize == 0 {
++			children = append(children, layout.Rigid(layout.Spacer{Height: unit.Dp(spacing)}.Layout))
++		}
++
++		i := i // Capture variable for closure
++		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++			// Handle click events
++			if cp.HistoryClickables[i].Clicked(gtx) {
++				cp.State.SetRGB(historyColor.R, historyColor.G, historyColor.B)
++				cp.updateRGBSliders()
++				cp.updateHSLSliders()
++				cp.updateHexEditor()
++			}
++
++			return layout.Inset{Right: unit.Dp(spacing), Bottom: unit.Dp(spacing)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
++				bounds := image.Rectangle{Max: image.Point{X: colorSize, Y: colorSize}}
++				// Register clickable area
++				pointer.CursorPointer.Add(gtx.Ops)
++				cp.HistoryClickables[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
++					return layout.Dimensions{Size: image.Point{X: colorSize, Y: colorSize}}
++				})
++
++				// Draw color with rounded corners
++				roundedRect := clip.RRect{Rect: bounds, SE: 2, SW: 2, NE: 2, NW: 2}
++				roundedStack := roundedRect.Push(gtx.Ops)
++				paint.Fill(gtx.Ops, historyColor)
++				roundedStack.Pop()
++
++				// Draw border
++				borderColor := color.NRGBA{R: 0, G: 0, B: 0, A: 128}
++				borderRect := image.Rectangle{
++					Min: image.Point{X: 0, Y: 0},
++					Max: image.Point{X: colorSize, Y: colorSize},
++				}
++				paint.FillShape(gtx.Ops, borderColor, clip.Rect(borderRect).Op())
++
++				// Check if this color is the currently selected color
++				if historyColor.R == cp.State.Red && historyColor.G == cp.State.Green && historyColor.B == cp.State.Blue {
++					// Draw selection border
++					selectedBorderColor := color.NRGBA{R: 0, G: 120, B: 215, A: 255}
++					selectedBorderRect := image.Rectangle{
++						Min: image.Point{X: -2, Y: -2},
++						Max: image.Point{X: colorSize + 2, Y: colorSize + 2},
++					}
++					paint.FillShape(gtx.Ops, selectedBorderColor, clip.Rect(selectedBorderRect).Op())
++				}
++
++				return layout.Dimensions{Size: image.Point{X: colorSize, Y: colorSize}}
++			})
++		}))
++	}
++
++	return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceEnd}.Layout(gtx, children...)
++}
++
++// layoutColorPalette 渲染256色选择面板
++func (cp *ColorPicker) layoutColorPalette(gtx layout.Context) layout.Dimensions {
++	colorSize := gtx.Dp(unit.Dp(16))
++	spacing := gtx.Dp(unit.Dp(2))
++	rowSize := 16 // 16 colors per row
++
++	var children []layout.FlexChild
++	clickablesLen := len(cp.PaletteClickables)
++	for i, paletteColor := range cp.ColorPalette {
++		if i >= clickablesLen {
++			break
++		}
++		if i > 0 && i%rowSize == 0 {
++			children = append(children, layout.Rigid(layout.Spacer{Height: unit.Dp(spacing)}.Layout))
++		}
++
++		i := i // Capture variable for closure
++		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++			// Handle click events
++			if cp.PaletteClickables[i].Clicked(gtx) {
++				cp.State.SetRGB(paletteColor.R, paletteColor.G, paletteColor.B)
++				cp.updateRGBSliders()
++				cp.updateHSLSliders()
++				cp.updateHexEditor()
++			}
++
++			return layout.Inset{Right: unit.Dp(spacing), Bottom: unit.Dp(spacing)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
++				bounds := image.Rectangle{Max: image.Point{X: colorSize, Y: colorSize}}
++				// Register clickable area
++				pointer.CursorPointer.Add(gtx.Ops)
++				cp.PaletteClickables[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
++					return layout.Dimensions{Size: image.Point{X: colorSize, Y: colorSize}}
++				})
++
++				// Draw color
++				stack := clip.Rect(bounds).Push(gtx.Ops)
++				paint.Fill(gtx.Ops, paletteColor)
++				stack.Pop()
++
++				// Check if this color is the currently selected color
++				if paletteColor.R == cp.State.Red && paletteColor.G == cp.State.Green && paletteColor.B == cp.State.Blue {
++					// Draw selection border
++					selectedBorderColor := color.NRGBA{R: 0, G: 120, B: 215, A: 255}
++					selectedBorderRect := image.Rectangle{
++						Min: image.Point{X: -1, Y: -1},
++						Max: image.Point{X: colorSize + 1, Y: colorSize + 1},
++					}
++					paint.FillShape(gtx.Ops, selectedBorderColor, clip.Rect(selectedBorderRect).Op())
++				}
++
++				return layout.Dimensions{Size: image.Point{X: colorSize, Y: colorSize}}
++			})
++		}))
++	}
++
++	return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceEnd}.Layout(gtx, children...)
++}
++
++// layoutRGBSliders 渲染 RGB 滑块
++func (cp *ColorPicker) layoutRGBSliders(gtx layout.Context, th *material.Theme) layout.Dimensions {
++	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
++		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
++				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++					return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, material.Label(th, th.TextSize, "R: ").Layout)
++				}),
++				layout.Flexed(1, material.Slider(th, cp.RedSlider).Layout),
++				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++					return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, material.Label(th, th.TextSize, fmt.Sprintf("%d", int(cp.RedSlider.Value))).Layout)
++				}),
++			)
++		}),
++		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
++		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
++				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++					return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, material.Label(th, th.TextSize, "G: ").Layout)
++				}),
++				layout.Flexed(1, material.Slider(th, cp.GreenSlider).Layout),
++				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++					return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, material.Label(th, th.TextSize, fmt.Sprintf("%d", int(cp.GreenSlider.Value))).Layout)
++				}),
++			)
++		}),
++		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
++		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
++				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++					return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, material.Label(th, th.TextSize, "B: ").Layout)
++				}),
++				layout.Flexed(1, material.Slider(th, cp.BlueSlider).Layout),
++				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++					return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, material.Label(th, th.TextSize, fmt.Sprintf("%d", int(cp.BlueSlider.Value))).Layout)
++				}),
++			)
++		}),
++		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
++		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
++				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++					return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, material.Label(th, th.TextSize, "A: ").Layout)
++				}),
++				layout.Flexed(1, material.Slider(th, cp.AlphaSlider).Layout),
++				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++					return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, material.Label(th, th.TextSize, fmt.Sprintf("%d", int(cp.AlphaSlider.Value))).Layout)
++				}),
++			)
++		}),
++		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
++		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
++				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++					return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, material.Label(th, th.TextSize, "H: ").Layout)
++				}),
++				layout.Flexed(1, material.Slider(th, cp.HueSlider).Layout),
++				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++					return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, material.Label(th, th.TextSize, fmt.Sprintf("%d", int(cp.HueSlider.Value*360))).Layout)
++				}),
++			)
++		}),
++		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
++		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
++				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++					return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, material.Label(th, th.TextSize, "S: ").Layout)
++				}),
++				layout.Flexed(1, material.Slider(th, cp.SatSlider).Layout),
++				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++					return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, material.Label(th, th.TextSize, fmt.Sprintf("%d%%", int(cp.SatSlider.Value*100))).Layout)
++				}),
++			)
++		}),
++		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
++		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
++				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++					return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, material.Label(th, th.TextSize, "L: ").Layout)
++				}),
++				layout.Flexed(1, material.Slider(th, cp.LightSlider).Layout),
++				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++					return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, material.Label(th, th.TextSize, fmt.Sprintf("%d%%", int(cp.LightSlider.Value*100))).Layout)
++				}),
++			)
++		}),
++	)
++}
++
++// layoutHexInput 渲染十六进制输入框
++func (cp *ColorPicker) layoutHexInput(gtx layout.Context, th *material.Theme) layout.Dimensions {
++	// Update hex editor text if it doesn't match the current color
++	if cp.HexEditor.Text() != cp.State.HexInput {
++		cp.updateHexEditor()
++	}
++
++	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
++		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++			return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, material.Label(th, th.TextSize, "Hex:").Layout)
++		}),
++		layout.Flexed(1, material.Editor(th, cp.HexEditor, "#RRGGBB").Layout),
++	)
++}
++
++// Update 更新颜色选择器状态
++func (cp *ColorPicker) Update(gtx layout.Context) {
++	// Update RGB sliders
++	if cp.RedSlider.Update(gtx) {
++		cp.State.Red = uint8(cp.RedSlider.Value)
++		cp.State.updateHSL()
++		cp.SatSlider.Value = float32(cp.State.Saturation)
++		cp.LightSlider.Value = float32(cp.State.Lightness)
++		cp.State.HexInput = rgbToHex(cp.State.Red, cp.State.Green, cp.State.Blue)
++		cp.updateHexEditor()
++	}
++
++	if cp.GreenSlider.Update(gtx) {
++		cp.State.Green = uint8(cp.GreenSlider.Value)
++		cp.State.updateHSL()
++		cp.SatSlider.Value = float32(cp.State.Saturation)
++		cp.LightSlider.Value = float32(cp.State.Lightness)
++		cp.State.HexInput = rgbToHex(cp.State.Red, cp.State.Green, cp.State.Blue)
++		cp.updateHexEditor()
++	}
++
++	if cp.BlueSlider.Update(gtx) {
++		cp.State.Blue = uint8(cp.BlueSlider.Value)
++		cp.State.updateHSL()
++		cp.SatSlider.Value = float32(cp.State.Saturation)
++		cp.LightSlider.Value = float32(cp.State.Lightness)
++		cp.State.HexInput = rgbToHex(cp.State.Red, cp.State.Green, cp.State.Blue)
++		cp.updateHexEditor()
++	}
++
++	if cp.AlphaSlider.Update(gtx) {
++		cp.State.Alpha = uint8(cp.AlphaSlider.Value)
++	}
++
++	// Update HSL sliders
++	if cp.HueSlider.Update(gtx) {
++		cp.State.Hue = float64(cp.HueSlider.Value)
++		cp.State.updateRGB()
++		cp.RedSlider.Value = float32(cp.State.Red)
++		cp.GreenSlider.Value = float32(cp.State.Green)
++		cp.BlueSlider.Value = float32(cp.State.Blue)
++		cp.State.HexInput = rgbToHex(cp.State.Red, cp.State.Green, cp.State.Blue)
++		cp.updateHexEditor()
++	}
++
++	if cp.SatSlider.Update(gtx) {
++		cp.State.Saturation = float64(cp.SatSlider.Value)
++		cp.State.updateRGB()
++		cp.RedSlider.Value = float32(cp.State.Red)
++		cp.GreenSlider.Value = float32(cp.State.Green)
++		cp.BlueSlider.Value = float32(cp.State.Blue)
++		cp.State.HexInput = rgbToHex(cp.State.Red, cp.State.Green, cp.State.Blue)
++		cp.updateHexEditor()
++	}
++
++	if cp.LightSlider.Update(gtx) {
++		cp.State.Lightness = float64(cp.LightSlider.Value)
++		cp.State.updateRGB()
++		cp.RedSlider.Value = float32(cp.State.Red)
++		cp.GreenSlider.Value = float32(cp.State.Green)
++		cp.BlueSlider.Value = float32(cp.State.Blue)
++		cp.State.HexInput = rgbToHex(cp.State.Red, cp.State.Green, cp.State.Blue)
++		cp.updateHexEditor()
++	}
++
++	// Update hex editor
++	hexText := cp.HexEditor.Text()
++	if len(hexText) > 0 {
++		// Ensure hex text starts with #
++		if hexText[0] != '#' {
++			hexText = "#" + hexText
++			cp.HexEditor.SetText(hexText)
++		}
++
++		// Only process valid hex codes
++		r, g, b, err := hexToRGB(hexText)
++		if err == nil {
++			// Update color state if hex is valid
++			cp.State.SetRGB(r, g, b)
++			cp.State.updateHSL()
++			cp.RedSlider.Value = float32(cp.State.Red)
++			cp.GreenSlider.Value = float32(cp.State.Green)
++			cp.BlueSlider.Value = float32(cp.State.Blue)
++			cp.HueSlider.Value = float32(cp.State.Hue)
++			cp.SatSlider.Value = float32(cp.State.Saturation)
++			cp.LightSlider.Value = float32(cp.State.Lightness)
++		}
++	}
++
++	// Handle button clicks
++	if cp.ConfirmButton.Clicked(gtx) {
++		fmt.Printf("[ColorPicker] Confirm button clicked in Update\n")
++		// Add current color to history
++		cp.AddToHistory(cp.State.SelectedColor)
++		// Call confirm callback if set
++		if cp.OnConfirm != nil {
++			fmt.Printf("[ColorPicker] Calling OnConfirm callback\n")
++			cp.OnConfirm()
++		} else {
++			fmt.Printf("[ColorPicker] OnConfirm callback is nil\n")
++		}
++	}
++
++	if cp.CancelButton.Clicked(gtx) {
++		fmt.Printf("[ColorPicker] Cancel button clicked\n")
++	}
++
++	if cp.UndoButton.Clicked(gtx) {
++		fmt.Printf("[ColorPicker] Undo button clicked\n")
++	}
++}
++
++// updateRGBSliders 更新 RGB 滑块值
++func (cp *ColorPicker) updateRGBSliders() {
++	cp.RedSlider.Value = float32(cp.State.Red)
++	cp.GreenSlider.Value = float32(cp.State.Green)
++	cp.BlueSlider.Value = float32(cp.State.Blue)
++	cp.AlphaSlider.Value = float32(cp.State.Alpha)
++}
++
++// updateHSLSliders 更新 HSL 滑块值
++func (cp *ColorPicker) updateHSLSliders() {
++	cp.HueSlider.Value = float32(cp.State.Hue)
++	cp.SatSlider.Value = float32(cp.State.Saturation)
++	cp.LightSlider.Value = float32(cp.State.Lightness)
++}
++
++// updateHexEditor 更新十六进制编辑器
++func (cp *ColorPicker) updateHexEditor() {
++	cp.HexEditor.SetText(cp.State.HexInput)
++}
++
++// AddToHistory 添加颜色到历史记录
++func (cp *ColorPicker) AddToHistory(color color.NRGBA) {
++	// Add new color to history
++	cp.ColorHistory = append(cp.ColorHistory[:cp.HistoryIndex+1], color)
++	cp.HistoryIndex = len(cp.ColorHistory) - 1
++
++	// Limit history size to 20 entries
++	if len(cp.ColorHistory) > 20 {
++		cp.ColorHistory = cp.ColorHistory[len(cp.ColorHistory)-20:]
++		cp.HistoryIndex = len(cp.ColorHistory) - 1
++	}
++}
++
++// Undo 撤销到上一个颜色
++func (cp *ColorPicker) Undo() {
++	if cp.HistoryIndex > 0 {
++		cp.HistoryIndex--
++		color := cp.ColorHistory[cp.HistoryIndex]
++		cp.State.SetRGB(color.R, color.G, color.B)
++		cp.updateRGBSliders()
++		cp.updateHSLSliders()
++		cp.updateHexEditor()
++	}
++}
++
++// Redo 重做颜色选择
++func (cp *ColorPicker) Redo() {
++	if cp.HistoryIndex < len(cp.ColorHistory)-1 {
++		cp.HistoryIndex++
++		color := cp.ColorHistory[cp.HistoryIndex]
++		cp.State.SetRGB(color.R, color.G, color.B)
++		cp.updateRGBSliders()
++		cp.updateHSLSliders()
++		cp.updateHexEditor()
++	}
++}
++
++// FormatColorToString 将颜色格式化为字符串（保持原始格式）
++func (s *ColorPickerState) FormatColorToString(originalFormat ColorFormat, original string) string {
++	switch originalFormat {
++	case ColorFormatHex3, ColorFormatHex4, ColorFormatHex6, ColorFormatHex8:
++		return rgbToHex(s.Red, s.Green, s.Blue)
++	case ColorFormatRGB:
++		return fmt.Sprintf("rgb(%d, %d, %d)", s.Red, s.Green, s.Blue)
++	case ColorFormatRGBA:
++		return fmt.Sprintf("rgba(%d, %d, %d, %.2f)", s.Red, s.Green, s.Blue, float64(s.Alpha)/255.0)
++	case ColorFormatHSL:
++		return fmt.Sprintf("hsl(%d, %d%%, %d%%)", int(s.Hue*360), int(s.Saturation*100), int(s.Lightness*100))
++	case ColorFormatHSLA:
++		return fmt.Sprintf("hsla(%d, %d%%, %d%%, %.2f)", int(s.Hue*360), int(s.Saturation*100), int(s.Lightness*100), float64(s.Alpha)/255.0)
++	case ColorFormatNamed:
++		return original
++	default:
++		return rgbToHex(s.Red, s.Green, s.Blue)
++	}
++}
+diff --git a/colorpicker/color_preview.go b/colorpicker/color_preview.go
+new file mode 100644
+index 0000000..4a5ec9c
+--- /dev/null
++++ b/colorpicker/color_preview.go
+@@ -0,0 +1,199 @@
++package colorpicker
++
++import (
++	"fmt"
++	"image"
++	"image/color"
++
++	"gioui.org/layout"
++	"gioui.org/op/clip"
++	"gioui.org/op/paint"
++	"gioui.org/unit"
++	"gioui.org/widget"
++	"gioui.org/widget/material"
++)
++
++// ColorPreview 颜色预览组件
++type ColorPreview struct {
++	ColorInfo  ColorInfo
++	Clickable  widget.Clickable
++	IsHovered  bool
++	IsSelected bool
++}
++
++// NewColorPreview 创建新的颜色预览
++func NewColorPreview(colorInfo ColorInfo) *ColorPreview {
++	return &ColorPreview{
++		ColorInfo: colorInfo,
++	}
++}
++
++// Layout 渲染颜色预览
++func (cp *ColorPreview) Layout(gtx layout.Context, th *material.Theme) layout.Dimensions {
++	cp.Clickable.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
++		size := gtx.Constraints.Min
++
++		if size.X == 0 {
++			size.X = gtx.Dp(unit.Dp(20))
++		}
++		if size.Y == 0 {
++			size.Y = gtx.Dp(unit.Dp(20))
++		}
++
++		rect := clip.Rect(image.Rectangle{
++			Max: size,
++		})
++
++		paint.FillShape(gtx.Ops, cp.ColorInfo.Color, rect.Op())
++
++		if cp.IsHovered || cp.IsSelected {
++			borderColor := color.NRGBA{R: 0, G: 120, B: 215, A: 255}
++			borderRect := clip.Rect(image.Rectangle{
++				Min: image.Point{X: 0, Y: 0},
++				Max: image.Point{X: size.X, Y: size.Y},
++			})
++			paint.FillShape(gtx.Ops, borderColor, borderRect.Op())
++		}
++
++		return layout.Dimensions{Size: size}
++	})
++
++	return layout.Dimensions{Size: gtx.Constraints.Min}
++}
++
++// ColorPreviewManager 颜色预览管理器
++type ColorPreviewManager struct {
++	detector      *ColorDetector
++	previews      []*ColorPreview
++	selectedIndex int
++	isOpen        bool
++	colorPicker   *ColorPicker
++}
++
++// NewColorPreviewManager 创建新的颜色预览管理器
++func NewColorPreviewManager() *ColorPreviewManager {
++	return &ColorPreviewManager{
++		detector:      NewColorDetector(),
++		previews:      make([]*ColorPreview, 0),
++		selectedIndex: -1,
++		isOpen:        false,
++	}
++}
++
++// UpdatePreviews 更新颜色预览
++func (cpm *ColorPreviewManager) UpdatePreviews(text string) {
++	colors := cpm.detector.DetectColors(text)
++	cpm.previews = make([]*ColorPreview, 0, len(colors))
++
++	for _, colorInfo := range colors {
++		cpm.previews = append(cpm.previews, NewColorPreview(colorInfo))
++	}
++}
++
++// GetPreviews 获取所有颜色预览
++func (cpm *ColorPreviewManager) GetPreviews() []*ColorPreview {
++	return cpm.previews
++}
++
++// HandleClick 处理点击事件
++func (cpm *ColorPreviewManager) HandleClick(index int) {
++	fmt.Printf("[ColorPreviewManager] HandleClick called: index=%d, len(previews)=%d\n", index, len(cpm.previews))
++	if index >= 0 && index < len(cpm.previews) {
++		cpm.selectedIndex = index
++		cpm.isOpen = true
++		fmt.Printf("[ColorPreviewManager] Set isOpen=true, selectedIndex=%d\n", index)
++
++		if cpm.colorPicker == nil {
++			cpm.colorPicker = NewColorPicker(cpm.previews[index].ColorInfo.Color)
++		} else {
++			cpm.colorPicker.State.SelectedColor = cpm.previews[index].ColorInfo.Color
++			cpm.colorPicker.State.SetRGB(
++				cpm.previews[index].ColorInfo.Color.R,
++				cpm.previews[index].ColorInfo.Color.G,
++				cpm.previews[index].ColorInfo.Color.B,
++			)
++		}
++	} else {
++		fmt.Printf("[ColorPreviewManager] Index out of bounds: index=%d, len(previews)=%d\n", index, len(cpm.previews))
++	}
++}
++
++// ClosePicker 关闭颜色选择器
++func (cpm *ColorPreviewManager) ClosePicker() {
++	cpm.isOpen = false
++	cpm.selectedIndex = -1
++}
++
++// IsPickerOpen 检查颜色选择器是否打开
++func (cpm *ColorPreviewManager) IsPickerOpen() bool {
++	return cpm.isOpen
++}
++
++// GetColorPicker 获取颜色选择器
++func (cpm *ColorPreviewManager) GetColorPicker() *ColorPicker {
++	return cpm.colorPicker
++}
++
++// GetSelectedColorInfo 获取选中的颜色信息
++func (cpm *ColorPreviewManager) GetSelectedColorInfo() *ColorInfo {
++	if cpm.selectedIndex >= 0 && cpm.selectedIndex < len(cpm.previews) {
++		return &cpm.previews[cpm.selectedIndex].ColorInfo
++	}
++	return nil
++}
++
++// UpdateHover 更新悬停状态
++func (cpm *ColorPreviewManager) UpdateHover(index int, hovered bool) {
++	if index >= 0 && index < len(cpm.previews) {
++		cpm.previews[index].IsHovered = hovered
++	}
++}
++
++// LayoutPreviews 渲染所有颜色预览
++func (cpm *ColorPreviewManager) LayoutPreviews(gtx layout.Context, th *material.Theme) layout.Dimensions {
++	children := make([]layout.FlexChild, 0, len(cpm.previews)*2)
++
++	for _, preview := range cpm.previews {
++		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++			return preview.Layout(gtx, th)
++		}))
++		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
++			return layout.Spacer{Width: unit.Dp(4)}.Layout(gtx)
++		}))
++	}
++
++	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...)
++}
++
++// LayoutPicker 渲染颜色选择器
++func (cpm *ColorPreviewManager) LayoutPicker(gtx layout.Context, th *material.Theme) layout.Dimensions {
++	fmt.Printf("[ColorPreviewManager] LayoutPicker called: isOpen=%v, colorPicker=%v\n", cpm.isOpen, cpm.colorPicker != nil)
++	if !cpm.isOpen || cpm.colorPicker == nil {
++		return layout.Dimensions{}
++	}
++
++	dims := cpm.colorPicker.Layout(gtx, th)
++	fmt.Printf("[ColorPreviewManager] LayoutPicker rendered: dims=%v\n", dims)
++	return dims
++}
++
++// Update 更新颜色选择器状态
++func (cpm *ColorPreviewManager) Update(gtx layout.Context) {
++	if cpm.colorPicker != nil {
++		cpm.colorPicker.Update(gtx)
++	}
++}
++
++// GetUpdatedColorString 获取更新后的颜色字符串
++func (cpm *ColorPreviewManager) GetUpdatedColorString() string {
++	if cpm.colorPicker == nil {
++		return ""
++	}
++
++	selectedInfo := cpm.GetSelectedColorInfo()
++	if selectedInfo == nil {
++		return ""
++	}
++
++	return cpm.colorPicker.State.FormatColorToString(selectedInfo.Format, selectedInfo.Original)
++}
+diff --git a/colorpicker/colorpicker_test.go b/colorpicker/colorpicker_test.go
+new file mode 100644
+index 0000000..92105d5
+--- /dev/null
++++ b/colorpicker/colorpicker_test.go
+@@ -0,0 +1,251 @@
++package colorpicker
++
++import (
++	"image/color"
++	"testing"
++)
++
++func TestColorDetection(t *testing.T) {
++	detector := NewColorDetector()
++
++	tests := []struct {
++		name     string
++		text     string
++		expected int
++	}{
++		{
++			name:     "Hex colors",
++			text:     "color: #FF5733; background: #00FF00;",
++			expected: 2,
++		},
++		{
++			name:     "RGB colors",
++			text:     "rgb(255, 0, 0) and rgb(0, 255, 0)",
++			expected: 2,
++		},
++		{
++			name:     "RGBA colors",
++			text:     "rgba(255, 0, 0, 0.5)",
++			expected: 1,
++		},
++		{
++			name:     "HSL colors",
++			text:     "hsl(120, 100%, 50%)",
++			expected: 1,
++		},
++		{
++			name:     "HSLA colors",
++			text:     "hsla(120, 100%, 50%, 0.5)",
++			expected: 1,
++		},
++		{
++			name:     "Named colors",
++			text:     "color: red; background: blue;",
++			expected: 2,
++		},
++		{
++			name:     "Mixed formats",
++			text:     "#FF5733, rgb(255,0,0), hsl(120,100%,50%), red",
++			expected: 4,
++		},
++		{
++			name:     "No colors",
++			text:     "This is just plain text without any colors",
++			expected: 0,
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			colors := detector.DetectColors(tt.text)
++			if len(colors) != tt.expected {
++				t.Errorf("Expected %d colors, got %d", tt.expected, len(colors))
++			}
++		})
++	}
++}
++
++func TestHexColorParsing(t *testing.T) {
++	tests := []struct {
++		name     string
++		hex      string
++		expected color.NRGBA
++	}{
++		{
++			name:     "3-digit hex",
++			hex:      "#F00",
++			expected: color.NRGBA{R: 255, G: 0, B: 0, A: 255},
++		},
++		{
++			name:     "6-digit hex",
++			hex:      "#FF5733",
++			expected: color.NRGBA{R: 255, G: 87, B: 51, A: 255},
++		},
++		{
++			name:     "8-digit hex",
++			hex:      "#FF573380",
++			expected: color.NRGBA{R: 255, G: 87, B: 51, A: 128},
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			detector := NewColorDetector()
++			colors := detector.DetectColors(tt.hex)
++			if len(colors) != 1 {
++				t.Fatalf("Expected 1 color, got %d", len(colors))
++			}
++			if colors[0].Color != tt.expected {
++				t.Errorf("Expected color %v, got %v", tt.expected, colors[0].Color)
++			}
++		})
++	}
++}
++
++func TestRGBToHSLConversion(t *testing.T) {
++	tests := []struct {
++		name  string
++		input color.NRGBA
++	}{
++		{
++			name:  "Red",
++			input: color.NRGBA{R: 255, G: 0, B: 0, A: 255},
++		},
++		{
++			name:  "Green",
++			input: color.NRGBA{R: 0, G: 255, B: 0, A: 255},
++		},
++		{
++			name:  "Blue",
++			input: color.NRGBA{R: 0, G: 0, B: 255, A: 255},
++		},
++		{
++			name:  "White",
++			input: color.NRGBA{R: 255, G: 255, B: 255, A: 255},
++		},
++		{
++			name:  "Black",
++			input: color.NRGBA{R: 0, G: 0, B: 0, A: 255},
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			state := NewColorPickerState(tt.input)
++			if state.Red != tt.input.R || state.Green != tt.input.G || state.Blue != tt.input.B {
++				t.Errorf("RGB values not preserved: expected %v, got %v", tt.input, color.NRGBA{R: state.Red, G: state.Green, B: state.Blue, A: state.Alpha})
++			}
++		})
++	}
++}
++
++func TestColorFormatting(t *testing.T) {
++	tests := []struct {
++		name     string
++		color    color.NRGBA
++		format   ColorFormat
++		original string
++		expected string
++	}{
++		{
++			name:     "Hex format",
++			color:    color.NRGBA{R: 255, G: 87, B: 51, A: 255},
++			format:   ColorFormatHex6,
++			original: "#FF5733",
++			expected: "#FF5733",
++		},
++		{
++			name:     "RGB format",
++			color:    color.NRGBA{R: 255, G: 0, B: 0, A: 255},
++			format:   ColorFormatRGB,
++			original: "rgb(255, 0, 0)",
++			expected: "rgb(255, 0, 0)",
++		},
++		{
++			name:     "RGBA format",
++			color:    color.NRGBA{R: 255, G: 0, B: 0, A: 128},
++			format:   ColorFormatRGBA,
++			original: "rgba(255, 0, 0, 0.50)",
++			expected: "rgba(255, 0, 0, 0.50)",
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			state := NewColorPickerState(tt.color)
++			result := state.FormatColorToString(tt.format, tt.original)
++			if result != tt.expected {
++				t.Errorf("Expected %q, got %q", tt.expected, result)
++			}
++		})
++	}
++}
++
++func TestColorPickerState(t *testing.T) {
++	initialColor := color.NRGBA{R: 128, G: 128, B: 128, A: 255}
++	state := NewColorPickerState(initialColor)
++
++	if state.SelectedColor != initialColor {
++		t.Errorf("Initial color not set correctly")
++	}
++
++	newColor := color.NRGBA{R: 255, G: 0, B: 0, A: 255}
++	state.SetRGB(255, 0, 0)
++
++	if state.SelectedColor != newColor {
++		t.Errorf("Color not updated correctly: expected %v, got %v", newColor, state.SelectedColor)
++	}
++
++	state.SetAlpha(128)
++	if state.Alpha != 128 {
++		t.Errorf("Alpha not updated correctly: expected 128, got %d", state.Alpha)
++	}
++}
++
++func TestEditorColorPicker(t *testing.T) {
++	ecp := NewEditorColorPicker()
++	text := "color: #FF5733; background: rgb(0, 255, 0);"
++
++	ecp.SetEditorText(text)
++	if ecp.GetEditorText() != text {
++		t.Errorf("Editor text not set correctly")
++	}
++
++	previews := ecp.GetPreviews()
++	if len(previews) != 2 {
++		t.Errorf("Expected 2 color previews, got %d", len(previews))
++	}
++
++	changeCalled := false
++	var newText string
++	ecp.SetOnColorChange(func(ot, nt string, start, end int) {
++		changeCalled = true
++		newText = nt
++		if ot != "#FF5733" {
++			t.Errorf("Expected old text #FF5733, got %s", ot)
++		}
++	})
++
++	ecp.HandleClick(0)
++	if !ecp.IsPickerOpen() {
++		t.Error("Color picker should be open after click")
++	}
++
++	picker := ecp.previewManager.GetColorPicker()
++	if picker != nil {
++		picker.State.SetRGB(0, 255, 0)
++	}
++
++	ecp.HandleConfirm()
++	if !changeCalled {
++		t.Error("Color change callback should have been called")
++	}
++
++	if ecp.IsPickerOpen() {
++		t.Error("Color picker should be closed after confirm")
++	}
++
++	if newText != "#00FF00" {
++		t.Errorf("Expected new text #00FF00, got %s", newText)
++	}
++}
+diff --git a/colorpicker/editor_integration.go b/colorpicker/editor_integration.go
+new file mode 100644
+index 0000000..4917712
+--- /dev/null
++++ b/colorpicker/editor_integration.go
+@@ -0,0 +1,146 @@
++package colorpicker
++
++import (
++	"gioui.org/layout"
++	"gioui.org/widget/material"
++)
++
++// EditorColorPicker 编辑器颜色拾色器集成
++type EditorColorPicker struct {
++	previewManager *ColorPreviewManager
++	editorText     string
++	onColorChange  func(oldText, newText string, start, end int)
++	onClose        func()
++}
++
++// NewEditorColorPicker 创建新的编辑器颜色拾色器
++func NewEditorColorPicker() *EditorColorPicker {
++	return &EditorColorPicker{
++		previewManager: NewColorPreviewManager(),
++		editorText:     "",
++		onColorChange:  nil,
++	}
++}
++
++// SetEditorText 设置编辑器文本
++func (ecp *EditorColorPicker) SetEditorText(text string) {
++	ecp.editorText = text
++	ecp.previewManager.UpdatePreviews(text)
++}
++
++// GetEditorText 获取编辑器文本
++func (ecp *EditorColorPicker) GetEditorText() string {
++	return ecp.editorText
++}
++
++// SetOnColorChange 设置颜色变化回调
++func (ecp *EditorColorPicker) SetOnColorChange(callback func(oldText, newText string, start, end int)) {
++	ecp.onColorChange = callback
++}
++
++// SetOnClose sets the callback for when the color picker is closed.
++func (ecp *EditorColorPicker) SetOnClose(callback func()) {
++	ecp.onClose = callback
++}
++
++// HandleClick 处理颜色预览点击
++func (ecp *EditorColorPicker) HandleClick(index int) {
++	// Find the preview that matches the selected color info
++	previews := ecp.previewManager.GetPreviews()
++	if len(previews) == 0 {
++		return
++	}
++
++	// Use the first preview (or find the correct one based on index)
++	ecp.previewManager.HandleClick(0)
++	// Set confirm callback to apply color and close picker
++	if colorPicker := ecp.previewManager.GetColorPicker(); colorPicker != nil {
++		colorPicker.OnConfirm = func() {
++			ecp.HandleConfirm()
++		}
++	}
++}
++
++// HandleConfirm 处理颜色选择确认
++func (ecp *EditorColorPicker) HandleConfirm() {
++	if !ecp.previewManager.IsPickerOpen() {
++		return
++	}
++
++	selectedInfo := ecp.previewManager.GetSelectedColorInfo()
++	if selectedInfo == nil {
++		return
++	}
++
++	oldText := selectedInfo.Original
++	newText := ecp.previewManager.GetUpdatedColorString()
++	start := selectedInfo.Range.Start
++	end := selectedInfo.Range.End
++
++	if ecp.onColorChange != nil && oldText != newText {
++		ecp.onColorChange(oldText, newText, start, end)
++	}
++
++	if colorPicker := ecp.previewManager.GetColorPicker(); colorPicker != nil {
++		colorPicker.AddToHistory(colorPicker.State.SelectedColor)
++	}
++
++	ecp.previewManager.ClosePicker()
++	ecp.previewManager.UpdatePreviews(ecp.editorText)
++
++	// Call the close callback
++	if ecp.onClose != nil {
++		ecp.onClose()
++	}
++}
++
++// HandleCancel 处理颜色选择取消
++func (ecp *EditorColorPicker) HandleCancel() {
++	ecp.previewManager.ClosePicker()
++}
++
++// IsPickerOpen 检查颜色选择器是否打开
++func (ecp *EditorColorPicker) IsPickerOpen() bool {
++	return ecp.previewManager.IsPickerOpen()
++}
++
++// Update 更新状态
++func (ecp *EditorColorPicker) Update(gtx layout.Context) {
++	ecp.previewManager.Update(gtx)
++}
++
++// LayoutPreviews 渲染颜色预览
++func (ecp *EditorColorPicker) LayoutPreviews(gtx layout.Context, th *material.Theme) layout.Dimensions {
++	return ecp.previewManager.LayoutPreviews(gtx, th)
++}
++
++// LayoutPicker 渲染颜色选择器
++func (ecp *EditorColorPicker) LayoutPicker(gtx layout.Context, th *material.Theme) layout.Dimensions {
++	return ecp.previewManager.LayoutPicker(gtx, th)
++}
++
++// Layout 渲染颜色选择器（实现 ColorPickerLayout 接口）
++func (ecp *EditorColorPicker) Layout(gtx layout.Context, th *material.Theme) layout.Dimensions {
++	return ecp.previewManager.LayoutPicker(gtx, th)
++}
++
++// GetPreviews 获取所有颜色预览
++func (ecp *EditorColorPicker) GetPreviews() []*ColorPreview {
++	return ecp.previewManager.GetPreviews()
++}
++
++// UpdateHover 更新悬停状态
++func (ecp *EditorColorPicker) UpdateHover(index int, hovered bool) {
++	ecp.previewManager.UpdateHover(index, hovered)
++}
++
++// ApplyColorChange 应用颜色变化到编辑器文本
++func (ecp *EditorColorPicker) ApplyColorChange(oldText, newText string, start, end int) {
++	if start < 0 || end > len(ecp.editorText) {
++		return
++	}
++
++	newEditorText := ecp.editorText[:start] + newText + ecp.editorText[end:]
++	ecp.editorText = newEditorText
++	ecp.previewManager.UpdatePreviews(ecp.editorText)
++}
+diff --git a/colorpicker/example_test.go b/colorpicker/example_test.go
+new file mode 100644
+index 0000000..73b2bcc
+--- /dev/null
++++ b/colorpicker/example_test.go
+@@ -0,0 +1,41 @@
++package colorpicker
++
++import (
++	"image/color"
++
++	"gioui.org/app"
++	"gioui.org/op"
++	"gioui.org/unit"
++	"gioui.org/widget/material"
++)
++
++// ExampleColorPicker demonstrates how to use the color picker
++func ExampleColorPicker() {
++	// Create a new color picker with an initial color
++	picker := NewColorPicker(color.NRGBA{R: 255, G: 0, B: 0, A: 255})
++
++	// Create a window
++	w := &app.Window{}
++	w.Option(app.Title("Color Picker Example"))
++	w.Option(app.Size(unit.Dp(400), unit.Dp(500)))
++
++	// Create a theme
++	th := material.NewTheme()
++
++	// Run the window
++	var ops op.Ops
++	for {
++		e := w.Event()
++		switch e := e.(type) {
++		case app.DestroyEvent:
++			return
++		case app.FrameEvent:
++			gtx := app.NewContext(&ops, e)
++			// Layout the color picker
++			picker.Layout(gtx, th)
++			// Update the color picker state
++			picker.Update(gtx)
++			e.Frame(gtx.Ops)
++		}
++	}
++}
+diff --git a/editor.go b/editor.go
+index e85579d..5580526 100644
+--- a/editor.go
++++ b/editor.go
+@@ -20,6 +20,7 @@ import (
+ 	"gioui.org/op/paint"
+ 	"gioui.org/text"
+ 	"gioui.org/unit"
++	"gioui.org/widget/material"
+ 	gvcolor "github.com/oligo/gvcode/color"
+ 	"github.com/oligo/gvcode/gutter"
+ 	"github.com/oligo/gvcode/internal/buffer"
+@@ -86,6 +87,11 @@ type Editor struct {
+ 	stickyLinesClicker gesture.Click
+ }
+ 
++// GetGutterManager returns the gutter manager instance
++func (e *Editor) GetGutterManager() *gutter.Manager {
++	return e.gutterManager
++}
++
+ // columnEditState tracks state for column/vertical editing mode
+ type columnEditState struct {
+ 	// enabled indicates whether column editing mode is active
+@@ -263,6 +269,8 @@ func (e *Editor) Layout(gtx layout.Context, lt *text.Shaper) layout.Dimensions {
+ 			if e.completor != nil {
+ 				e.text.PaintOverlay(gtx, e.completor.Offset(), e.completor.Layout)
+ 			}
++			// Render color picker overlay if needed
++			e.renderColorPickerOverlay(gtx)
+ 			return dims
+ 		}),
+ 	)
+@@ -271,13 +279,32 @@ func (e *Editor) Layout(gtx layout.Context, lt *text.Shaper) layout.Dimensions {
+ func (e *Editor) layout(gtx layout.Context, shaper *text.Shaper) layout.Dimensions {
+ 	defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
+ 	pointer.CursorText.Add(gtx.Ops)
+-	event.Op(gtx.Ops, e)
++
++	// Check if color picker is open
++	colorPickerOpen := false
++	if e.gutterManager != nil {
++		providers := e.gutterManager.Providers()
++		for _, p := range providers {
++			if colorPickerProvider, ok := p.(gutter.ColorPickerProvider); ok && colorPickerProvider.ShowColorPicker() {
++				colorPickerOpen = true
++				break
++			}
++		}
++	}
++
++	// Only add event handler if color picker is not open
++	if !colorPickerOpen {
++		event.Op(gtx.Ops, e)
++	}
+ 
+ 	// e.scroller.Add(gtx.Ops)
+ 
+-	e.clicker.Add(gtx.Ops)
+-	e.dragger.Add(gtx.Ops)
+-	e.hover.Add(gtx.Ops)
++	// Only add event handlers if color picker is not open
++	if !colorPickerOpen {
++		e.clicker.Add(gtx.Ops)
++		e.dragger.Add(gtx.Ops)
++		e.hover.Add(gtx.Ops)
++	}
+ 	e.showCaret = false
+ 	if gtx.Focused(e) {
+ 		now := gtx.Now
+@@ -318,6 +345,9 @@ func (e *Editor) layout(gtx layout.Context, shaper *text.Shaper) layout.Dimensio
+ 		}
+ 
+ 		e.paintText(gtx, textColor)
++
++		// Render color indicators in text area
++		e.renderColorIndicatorsInText(gtx, shaper)
+ 	}
+ 
+ 	// Paint column selection if active
+@@ -1363,3 +1393,82 @@ func (e *Editor) moveToLine(lineNum int) {
+ 	// Scroll to make this line visible near the top
+ 	e.text.ScrollRel(0, para.StartY-scrollOff.Y)
+ }
++
++// renderColorPickerOverlay renders the color picker overlay if needed.
++func (e *Editor) renderColorPickerOverlay(gtx layout.Context) {
++	if e.gutterManager == nil {
++		fmt.Println("[Editor] renderColorPickerOverlay: gutterManager is nil")
++		return
++	}
++
++	// Find the color indicator provider
++	var colorPickerProvider gutter.ColorPickerProvider
++
++	providers := e.gutterManager.Providers()
++	fmt.Printf("[Editor] renderColorPickerOverlay: Found %d providers\n", len(providers))
++	for i, p := range providers {
++		fmt.Printf("[Editor] renderColorPickerOverlay: Provider %d: ID=%s, Type=%T\n", i, p.ID(), p)
++		if p.ID() == "colorindicator" {
++			// Try type assertion to ColorPickerProvider
++			if ci, ok := p.(gutter.ColorPickerProvider); ok {
++				fmt.Println("[Editor] renderColorPickerOverlay: Successfully cast to ColorPickerProvider")
++				colorPickerProvider = ci
++				break
++			} else {
++				fmt.Println("[Editor] renderColorPickerOverlay: Failed to cast to ColorPickerProvider")
++			}
++		}
++	}
++
++	if colorPickerProvider == nil {
++		fmt.Println("[Editor] renderColorPickerOverlay: colorPickerProvider is nil")
++		return
++	}
++
++	if !colorPickerProvider.ShowColorPicker() {
++		fmt.Println("[Editor] renderColorPickerOverlay: ShowColorPicker returned false")
++		return
++	}
++
++	fmt.Println("[Editor] renderColorPickerOverlay: Rendering color picker")
++
++	// Render the color picker
++	colorPicker := colorPickerProvider.GetEditorColorPicker()
++	if colorPicker != nil {
++		// Update the color picker state to handle events
++		colorPicker.Update(gtx)
++		// Create a default theme for the color picker
++		th := material.NewTheme()
++		colorPicker.Layout(gtx, th)
++	}
++}
++
++// renderColorIndicatorsInText renders color indicators in the text area (not gutter).
++func (e *Editor) renderColorIndicatorsInText(gtx layout.Context, shaper *text.Shaper) {
++	fmt.Printf("[Editor] renderColorIndicatorsInText called\n")
++
++	if e.gutterManager == nil {
++		fmt.Printf("[Editor] gutterManager is nil\n")
++		return
++	}
++
++	// Find the color indicator provider
++	providers := e.gutterManager.Providers()
++	fmt.Printf("[Editor] Found %d providers\n", len(providers))
++
++	for _, p := range providers {
++		fmt.Printf("[Editor] Checking provider: ID=%s\n", p.ID())
++		if p.ID() == "colorindicator" {
++			if ci, ok := p.(gutter.ColorPickerProvider); ok {
++				fmt.Printf("[Editor] Found color indicator provider, calling RenderInTextArea\n")
++				// Build gutter context for rendering
++				ctx := e.buildGutterContext(gtx, shaper)
++				// Render color indicators in text area
++				ci.RenderInTextArea(gtx, ctx, e.gutterWidth)
++				break
++			} else {
++				fmt.Printf("[Editor] Provider 'colorindicator' does not implement ColorPickerProvider\n")
++			}
++		}
++	}
++}
+diff --git a/example/main.go b/example/main.go
+index da5a9fa..2d995c4 100644
+--- a/example/main.go
++++ b/example/main.go
+@@ -33,9 +33,103 @@ import (
+ //go:embed main.go
+ var embeddedMain string
+ 
++// Color test content for demonstration
++var colorTestContent = `package main
++
++import (
++	"image/color"
++)
++
++// Color constants for testing
++const (
++	// Hex colors
++	ColorRed    = "#FF0000"
++	ColorGreen  = "#00FF00"
++	ColorBlue   = "#0000FF"
++	ColorYellow = "#FFFF00"
++	ColorPurple = "#800080"
++	ColorOrange = "#FFA500"
++	ColorCyan   = "#00FFFF"
++	ColorPink   = "#FFC0CB"
++	ColorBrown  = "#A52A2A"
++	ColorGray   = "#808080"
++	
++	// RGB colors
++	ColorRGBRed   = "rgb(255, 0, 0)"
++	ColorRGBGreen = "rgb(0, 255, 0)"
++	ColorRGBBlue  = "rgb(0, 0, 255)"
++	
++	// HSL colors
++	ColorHSLRed   = "hsl(0, 100%, 50%)"
++	ColorHSLGreen = "hsl(120, 100%, 50%)"
++	ColorHSLBlue  = "hsl(240, 100%, 50%)"
++)
++
++// Test line with multiple colors
++var testColors = "#FF0000 #00FF00 #0000FF #FFFF00 #800080 #FFA500"
++
++// Color variables for testing
++var (
++	// Hex colors
++	HexRed    = "#FF0000"
++	HexGreen  = "#00FF00"
++	HexBlue   = "#0000FF"
++	HexYellow = "#FFFF00"
++	HexPurple = "#800080"
++	HexOrange = "#FFA500"
++	HexCyan   = "#00FFFF"
++	HexPink   = "#FFC0CB"
++	HexBrown  = "#A52A2A"
++	HexGray   = "#808080"
++	
++	// RGB colors
++	RGBRed   = "rgb(255, 0, 0)"
++	RGBGreen = "rgb(0, 255, 0)"
++	RGBBlue  = "rgb(0, 0, 255)"
++	
++	// HSL colors
++	HSLRed   = "hsl(0, 100%, 50%)"
++	HSLGreen = "hsl(120, 100%, 50%)"
++	HSLBlue  = "hsl(240, 100%, 50%)"
++)
++`
++
++// Color constants for demonstration
++const (
++	ColorRed    = "#FF0000"
++	ColorGreen  = "#00FF00"
++	ColorBlue   = "#0000FF"
++	ColorYellow = "#FFFF00"
++	ColorPurple = "#800080"
++	ColorOrange = "#FFA500"
++	ColorCyan   = "#00FFFF"
++	ColorPink   = "#FFC0CB"
++	ColorBrown  = "#A52A2A"
++	ColorGray   = "#808080"
++)
++
++// RGB color values for demonstration
++var (
++	ColorRGBRed   = color.RGBA{R: 255, G: 0, B: 0, A: 255}
++	ColorRGBGreen = color.RGBA{R: 0, G: 255, B: 0, A: 255}
++	ColorRGBBlue  = color.RGBA{R: 0, G: 0, B: 255, A: 255}
++)
++
++// HSL color values for demonstration
++var (
++	ColorHSLRed   = "hsl(0, 100%, 50%)"
++	ColorHSLGreen = "hsl(120, 100%, 50%)"
++	ColorHSLBlue  = "hsl(240, 100%, 50%)"
++)
++
+ // Example function to demonstrate run button
+ func HelloWorld() {
+ 	fmt.Println("Hello, World!")
++	fmt.Printf("Red color: %s\n", ColorRed)
++	fmt.Printf("Green color: %s\n", ColorGreen)
++	fmt.Printf("Blue color: %s\n", ColorBlue)
++	fmt.Printf("RGB Red: %+v\n", ColorRGBRed)
++	fmt.Printf("HSL Red: %s\n", ColorHSLRed)
+ }
+ 
+ // TestExample demonstrates the test run button in gutter
+@@ -63,7 +157,7 @@ func main() {
+ 	gvcode.SetDebug(false)
+ 	editorApp.state = wg.NewEditor(th)
+ 
+-	editorApp.state.SetText(embeddedMain)
++	editorApp.state.SetText(colorTestContent)
+ 
+ 	// Setting up auto-completion.
+ 	cm := &completion.DefaultCompletion{Editor: editorApp.state}
+@@ -95,8 +189,29 @@ func main() {
+ 		gvcode.WithStickyLines(),            // 粘性行
+ 		gvcode.WithCodeFolding(),            // 代码折叠
+ 		gvcode.WithColumnEdit(),             // 列编辑模式
++		gvcode.WithColorIndicators(),        // 颜色指示器
+ 	)
+ 
++	// Set color change callback to update editor text
++	if colorPickerProvider := editorApp.state.GetGutterManager().GetProvider("colorindicator"); colorPickerProvider != nil {
++		if provider, ok := colorPickerProvider.(interface {
++			GetEditorColorPicker() interface {
++				SetOnColorChange(func(oldText, newText string, start, end int))
++			}
++		}); ok {
++			editorColorPicker := provider.GetEditorColorPicker()
++			editorColorPicker.SetOnColorChange(func(oldText, newText string, start, end int) {
++				currentText := editorApp.state.Text()
++				if start >= 0 && end <= len(currentText) && start <= end {
++					newText := currentText[:start] + newText + currentText[end:]
++					editorApp.state.SetText(newText)
++					tokens := HightlightTextByPattern(editorApp.state.Text(), syntaxPattern)
++					editorApp.state.SetSyntaxTokens(tokens...)
++				}
++			})
++		}
++	}
++
+ 	tokens := HightlightTextByPattern(editorApp.state.Text(), syntaxPattern)
+ 	editorApp.state.SetSyntaxTokens(tokens...)
+ 
+diff --git a/go.mod b/go.mod
+index 196d9bb..d592ab6 100644
+--- a/go.mod
++++ b/go.mod
+@@ -1,6 +1,6 @@
+ module github.com/oligo/gvcode
+ 
+-go 1.26
++go 1.26.1
+ 
+ require (
+ 	gioui.org v0.9.0
+diff --git a/gutter.go b/gutter.go
+index 6bcbb0c..d47a793 100644
+--- a/gutter.go
++++ b/gutter.go
+@@ -1,6 +1,7 @@
+ package gvcode
+ 
+ import (
++	"fmt"
+ 	"image"
+ 	"image/color"
+ 	"sort"
+@@ -59,6 +60,10 @@ func (e *Editor) buildGutterContext(gtx layout.Context, shaper *text.Shaper) gut
+ 	e.feedLineContentsToStickyLinesProvider(paragraphs)
+ 	// Feed line contents to fold button provider if it exists
+ 	e.feedLineContentsToFoldButtonProvider(paragraphs)
++	// Feed line contents to color indicator provider if it exists
++	e.feedLineContentsToColorIndicatorProvider(paragraphs)
++
++	fmt.Printf("[Editor] buildGutterContext: paragraphs=%d, providers=%d\n", len(paragraphs), len(e.gutterManager.Providers()))
+ 
+ 	return gutter.GutterContext{
+ 		Shaper:      shaper,
+@@ -189,6 +194,48 @@ func (e *Editor) feedLineContentsToFoldButtonProvider(paragraphs []gutter.Paragr
+ 	foldButtonProvider.SetLineContents(lines, 0)
+ }
+ 
++// feedLineContentsToColorIndicatorProvider reads all line contents and feeds them to the color indicator provider.
++func (e *Editor) feedLineContentsToColorIndicatorProvider(paragraphs []gutter.Paragraph) {
++	fmt.Printf("[Editor] feedLineContentsToColorIndicatorProvider called\n")
++
++	// Find the color indicator provider
++	var colorIndicatorProvider gutter.LineContentProvider
++
++	for _, p := range e.gutterManager.Providers() {
++		fmt.Printf("[Editor] Checking provider: ID=%s\n", p.ID())
++		if p.ID() == "colorindicator" {
++			if ci, ok := p.(gutter.LineContentProvider); ok {
++				colorIndicatorProvider = ci
++				fmt.Printf("[Editor] Found color indicator provider\n")
++				break
++			}
++		}
++	}
++
++	if colorIndicatorProvider == nil {
++		fmt.Printf("[Editor] Color indicator provider not found\n")
++		return
++	}
++
++	// For color indicators, we need ALL lines to detect colors throughout the file
++	totalLines := e.text.Paragraphs()
++	if totalLines <= 0 {
++		return
++	}
++
++	// Read all lines from the buffer
++	srcReader := buffer.NewReader(e.buffer)
++	e.scratch = srcReader.ReadAll(e.scratch)
++	allContent := string(e.scratch)
++
++	// Split into lines
++	lines := strings.Split(allContent, "\n")
++
++	// Feed to provider
++	fmt.Printf("[Editor] Calling SetLineContents with %d lines\n", len(lines))
++	colorIndicatorProvider.SetLineContents(lines, 0)
++}
++
+ // gutterColors returns the GutterColors based on the color palette.
+ func (e *Editor) gutterColors() *gutter.GutterColors {
+ 	if e.colorPalette == nil {
+diff --git a/gutter/gutter.go b/gutter/gutter.go
+index 5a03ae8..8fdd6ea 100644
+--- a/gutter/gutter.go
++++ b/gutter/gutter.go
+@@ -6,6 +6,7 @@ import (
+ 	"gioui.org/layout"
+ 	"gioui.org/text"
+ 	"gioui.org/unit"
++	"gioui.org/widget/material"
+ 	gvcolor "github.com/oligo/gvcode/color"
+ 	"golang.org/x/image/math/fixed"
+ )
+@@ -153,3 +154,20 @@ const (
+ 	RunButtonMain
+ 	RunButtonTest
+ )
++
++// ColorPickerLayout is an interface for color picker layout.
++type ColorPickerLayout interface {
++	Update(gtx layout.Context)
++	Layout(gtx layout.Context, th *material.Theme) layout.Dimensions
++}
++
++// ColorPickerProvider is an interface for providers that can show a color picker.
++type ColorPickerProvider interface {
++	GutterProvider
++	// ShowColorPicker returns whether the color picker should be shown.
++	ShowColorPicker() bool
++	// GetEditorColorPicker returns the editor color picker instance.
++	GetEditorColorPicker() ColorPickerLayout
++	// RenderInTextArea renders color indicators in the text area (not gutter).
++	RenderInTextArea(gtx layout.Context, ctx GutterContext, gutterWidth int)
++}
+diff --git a/gutter/manager.go b/gutter/manager.go
+index de4d377..a07a8cb 100644
+--- a/gutter/manager.go
++++ b/gutter/manager.go
+@@ -1,6 +1,7 @@
+ package gutter
+ 
+ import (
++	"fmt"
+ 	"image"
+ 	"sort"
+ 
+@@ -190,6 +191,7 @@ func (m *Manager) Update(gtx layout.Context) (GutterEvent, bool) {
+ // handleClick processes a click event and generates appropriate gutter events.
+ func (m *Manager) handleClick(gtx layout.Context, evt gesture.ClickEvent) {
+ 	pos := image.Point{X: int(evt.Position.X), Y: int(evt.Position.Y)}
++	fmt.Printf("[GutterManager] handleClick: pos=(%d, %d), numClicks=%d\n", pos.X, pos.Y, evt.NumClicks)
+ 
+ 	// Find which provider was clicked
+ 	for _, p := range m.providers {
+@@ -198,15 +200,19 @@ func (m *Manager) handleClick(gtx layout.Context, evt gesture.ClickEvent) {
+ 			continue
+ 		}
+ 
++		fmt.Printf("[GutterManager] Checking provider %s: bounds=%v, pos.In=%v\n", p.ID(), bounds, pos.In(bounds))
++
+ 		if pos.In(bounds) {
+ 			// Calculate which line was clicked
+ 			line := m.hitTestLine(pos.Y)
++			fmt.Printf("[GutterManager] Clicked in provider %s, line=%d\n", p.ID(), line)
+ 			if line < 0 {
+ 				continue
+ 			}
+ 
+ 			// Check if provider is interactive
+ 			if interactive, ok := p.(InteractiveGutter); ok {
++				fmt.Printf("[GutterManager] Calling HandleClick for provider %s\n", p.ID())
+ 				if interactive.HandleClick(line, evt.Source, evt.NumClicks, evt.Modifiers) {
+ 					m.pending = append(m.pending, GutterClickEvent{
+ 						ProviderID: p.ID(),
+@@ -230,6 +236,8 @@ func (m *Manager) handleClick(gtx layout.Context, evt gesture.ClickEvent) {
+ 			}
+ 		}
+ 	}
++
++	fmt.Printf("[GutterManager] No provider handled the click\n")
+ }
+ 
+ // hitTestLine determines which logical line (paragraph) index corresponds to a Y coordinate.
+diff --git a/gutter/providers/colorindicator.go b/gutter/providers/colorindicator.go
+new file mode 100644
+index 0000000..296af69
+--- /dev/null
++++ b/gutter/providers/colorindicator.go
+@@ -0,0 +1,509 @@
++package providers
++
++import (
++	"fmt"
++	"image"
++	"image/color"
++	"strings"
++
++	"gioui.org/gesture"
++	"gioui.org/io/key"
++	"gioui.org/io/pointer"
++	"gioui.org/layout"
++	"gioui.org/op/clip"
++	"gioui.org/op/paint"
++	"gioui.org/text"
++	"gioui.org/unit"
++	"github.com/oligo/gvcode/colorpicker"
++	"github.com/oligo/gvcode/gutter"
++	gestureExt "github.com/oligo/gvcode/internal/gesture"
++)
++
++const (
++	// ColorIndicatorProviderID is the unique identifier for the color indicator provider.
++	ColorIndicatorProviderID = "colorindicator"
++
++	// indicatorSize is the size of the color indicator in dp units.
++	indicatorSize = 16
++)
++
++// ColorIndicatorProvider renders color indicators in the gutter for detected colors.
++type ColorIndicatorProvider struct {
++	// paragraphs caches the visible paragraphs from the last Layout call.
++	paragraphs []gutter.Paragraph
++
++	// colorInfos caches color information for each line.
++	colorInfos map[int][]colorpicker.ColorInfo
++
++	// lineTexts caches the text content for each line.
++	lineTexts map[int]string
++
++	// lineHeight caches the line height from the last Layout call.
++	lineHeight int
++
++	// viewport caches the viewport from the last Layout call.
++	viewport image.Rectangle
++
++	// hoverer handles hover events.
++	hoverer gestureExt.Hover
++
++	// clicker handles click events.
++	clicker gesture.Click
++
++	// editorText is the current editor text.
++	editorText string
++
++	// isHovering indicates if the mouse is hovering over a color indicator.
++	isHovering bool
++
++	// hoveredLine is the line being hovered.
++	hoveredLine int
++
++	// hoveredColorIndex is the index of the color being hovered.
++	hoveredColorIndex int
++
++	// showPicker indicates if the color picker should be shown.
++	showPicker bool
++
++	// colorPicker is the color picker instance.
++	colorPicker *colorpicker.ColorPicker
++
++	// editorColorPicker manages the color picker integration.
++	editorColorPicker *colorpicker.EditorColorPicker
++
++	// enabled indicates whether color indicators are enabled.
++	enabled bool
++}
++
++// NewColorIndicatorProvider creates a new color indicator provider.
++func NewColorIndicatorProvider() *ColorIndicatorProvider {
++	editorColorPicker := colorpicker.NewEditorColorPicker()
++
++	provider := &ColorIndicatorProvider{
++		colorInfos:        make(map[int][]colorpicker.ColorInfo),
++		lineTexts:         make(map[int]string),
++		paragraphs:        make([]gutter.Paragraph, 0),
++		editorColorPicker: editorColorPicker,
++		enabled:           true,
++	}
++
++	// Set the close callback to reset showPicker when the picker is closed
++	editorColorPicker.SetOnClose(func() {
++		provider.showPicker = false
++		fmt.Printf("[ColorIndicator] Color picker closed via callback\n")
++	})
++
++	return provider
++}
++
++// SetEnabled sets whether color indicators are enabled.
++func (p *ColorIndicatorProvider) SetEnabled(enabled bool) {
++	p.enabled = enabled
++}
++
++// Enabled returns whether color indicators are enabled.
++func (p *ColorIndicatorProvider) Enabled() bool {
++	return p.enabled
++}
++
++// ID returns the unique identifier for this provider.
++func (p *ColorIndicatorProvider) ID() string {
++	return ColorIndicatorProviderID
++}
++
++// Priority returns the rendering priority. Color indicators have priority 140
++// meaning they are rendered between line numbers (100) and run buttons (150).
++func (p *ColorIndicatorProvider) Priority() int {
++	return 140
++}
++
++// Width returns the fixed width needed for color indicators.
++func (p *ColorIndicatorProvider) Width(gtx layout.Context, shaper *text.Shaper, params text.Parameters, lineCount int) unit.Dp {
++	if !p.enabled {
++		return 0
++	}
++	return unit.Dp(indicatorSize + 4) // Indicator size plus padding
++}
++
++// SetLineContents is called to provide line contents for color detection.
++func (p *ColorIndicatorProvider) SetLineContents(lines []string, startLine int) {
++	fmt.Printf("[ColorIndicator] SetLineContents called: lines=%d, startLine=%d\n", len(lines), startLine)
++
++	if !p.enabled {
++		fmt.Printf("[ColorIndicator] Color indicators disabled, skipping\n")
++		return
++	}
++
++	// Build full text for color detection
++	var fullText strings.Builder
++	for i, line := range lines {
++		fullText.WriteString(line)
++		if i < len(lines)-1 {
++			fullText.WriteString("\n")
++		}
++	}
++
++	fmt.Printf("[ColorIndicator] Full text length: %d\n", len(fullText.String()))
++	p.editorText = fullText.String()
++
++	// Cache line texts for offset calculation
++	p.lineTexts = make(map[int]string)
++	for i, line := range lines {
++		p.lineTexts[startLine+i] = line
++		fmt.Printf("[ColorIndicator] Cached line %d: %q (len=%d)\n", startLine+i, line, len(line))
++	}
++
++	// Detect colors in the text
++	detector := colorpicker.NewColorDetector()
++	allColors := detector.DetectColors(fullText.String())
++
++	fmt.Printf("[ColorIndicator] Detected %d colors in total\n", len(allColors))
++	for i, colorInfo := range allColors {
++		fmt.Printf("[ColorIndicator] Color %d: start=%d, end=%d, original=%q\n",
++			i, colorInfo.Range.Start, colorInfo.Range.End, colorInfo.Original)
++	}
++
++	// Group colors by line
++	p.colorInfos = make(map[int][]colorpicker.ColorInfo)
++	for _, colorInfo := range allColors {
++		// Calculate which line this color is on
++		lineNum := 0
++		charCount := 0
++		for i, line := range lines {
++			if colorInfo.Range.Start >= charCount && colorInfo.Range.Start < charCount+len(line) {
++				lineNum = startLine + i
++				break
++			}
++			charCount += len(line) + 1 // +1 for newline
++		}
++
++		p.colorInfos[lineNum] = append(p.colorInfos[lineNum], colorInfo)
++		fmt.Printf("[ColorIndicator] Assigned color to line %d: %q\n", lineNum, colorInfo.Original)
++	}
++
++	// Update editor color picker
++	p.editorColorPicker.SetEditorText(fullText.String())
++}
++
++// Layout renders color indicators for gutter (disabled - now rendering in text area).
++func (p *ColorIndicatorProvider) Layout(gtx layout.Context, ctx gutter.GutterContext) layout.Dimensions {
++	// Cache context info for event handling
++	p.paragraphs = ctx.Paragraphs
++	p.lineHeight = ctx.LineHeight.Ceil()
++	p.viewport = ctx.Viewport
++
++	// Process hover events
++	evt, ok := p.hoverer.Update(gtx)
++	if ok && evt.Kind == gestureExt.KindHovered {
++		// Find which color indicator is being hovered
++		clickY := evt.Position.Y + ctx.Viewport.Min.Y
++		clickX := evt.Position.X
++		line := p.hitTestLine(clickY)
++
++		if line >= 0 {
++			colorIndex := p.hitTestColorIndex(line, clickX, ctx)
++			if colorIndex >= 0 {
++				p.hoveredLine = line
++				p.hoveredColorIndex = colorIndex
++				// Don't auto-open on hover, only on click
++			} else {
++				p.hoveredLine = -1
++				p.hoveredColorIndex = -1
++			}
++		} else {
++			p.hoveredLine = -1
++			p.hoveredColorIndex = -1
++		}
++	} else if ok && evt.Kind == gestureExt.KindCancelled {
++		// Don't close picker when hover is cancelled if picker is open
++		// Only close when user explicitly closes it (e.g., clicks elsewhere or presses ESC)
++		// This prevents the picker from disappearing immediately after opening
++	}
++
++	// Process click events
++	for {
++		evt, ok := p.clicker.Update(gtx.Source)
++		if !ok {
++			break
++		}
++		fmt.Printf("[ColorIndicator] Click event detected: kind=%v, pos=(%v, %v)\n", evt.Kind, evt.Position.X, evt.Position.Y)
++		if evt.Kind == gesture.KindClick {
++			clickY := evt.Position.Y + ctx.Viewport.Min.Y
++			clickX := evt.Position.X
++			line := p.hitTestLine(clickY)
++			if line >= 0 {
++				colorIndex := p.hitTestColorIndex(line, clickX, ctx)
++				if colorIndex >= 0 {
++					fmt.Printf("[ColorIndicator] Click detected: line=%d, colorIndex=%d\n", line, colorIndex)
++					p.HandleClick(line, evt.Source, evt.NumClicks, evt.Modifiers)
++				}
++			}
++		}
++	}
++
++	// Don't render in gutter anymore - render in text area instead
++	return layout.Dimensions{Size: image.Pt(0, 0)}
++}
++
++// HandleClick implements the InteractiveGutter interface.
++func (p *ColorIndicatorProvider) HandleClick(line int, source pointer.Source, numClicks int, modifiers key.Modifiers) bool {
++	fmt.Printf("[ColorIndicator] HandleClick called: line=%d, numClicks=%d\n", line, numClicks)
++
++	colors, hasColors := p.colorInfos[line]
++	if !hasColors || len(colors) == 0 {
++		fmt.Printf("[ColorIndicator] No colors found on line %d\n", line)
++		return false
++	}
++
++	fmt.Printf("[ColorIndicator] Found %d colors on line %d\n", len(colors), line)
++
++	// Open color picker for the first color on this line
++	// TODO: Support clicking specific color indicators when there are multiple
++	p.hoveredLine = line
++	p.hoveredColorIndex = 0
++	p.showPicker = true
++	fmt.Printf("[ColorIndicator] Before HandleClick, calling editorColorPicker.HandleClick(0)\n")
++	p.editorColorPicker.HandleClick(0)
++	fmt.Printf("[ColorIndicator] After HandleClick, IsPickerOpen=%v\n", p.editorColorPicker.IsPickerOpen())
++
++	fmt.Printf("[ColorIndicator] Opened color picker: line=%d, colorIndex=0, showPicker=%v\n", line, p.showPicker)
++
++	return true
++}
++
++// HandleHover implements the InteractiveGutter interface.
++func (p *ColorIndicatorProvider) HandleHover(line int) *gutter.HoverInfo {
++	colors, hasColors := p.colorInfos[line]
++	if !hasColors || len(colors) == 0 {
++		return nil
++	}
++
++	return &gutter.HoverInfo{
++		Text: "Click to open color picker",
++	}
++}
++
++// GetEditorColorPicker returns the editor color picker instance.
++func (p *ColorIndicatorProvider) GetEditorColorPicker() gutter.ColorPickerLayout {
++	return p.editorColorPicker
++}
++
++// ShowColorPicker returns whether the color picker should be shown.
++func (p *ColorIndicatorProvider) ShowColorPicker() bool {
++	fmt.Printf("[ColorIndicator] ShowColorPicker called: showPicker=%v, isPickerOpen=%v\n", p.showPicker, p.editorColorPicker.IsPickerOpen())
++	return p.showPicker
++}
++
++// CloseColorPicker closes color picker.
++func (p *ColorIndicatorProvider) CloseColorPicker() {
++	p.showPicker = false
++	p.editorColorPicker.HandleCancel()
++	fmt.Printf("[ColorIndicator] CloseColorPicker called: showPicker=%v\n", p.showPicker)
++}
++
++// RenderInTextArea renders color indicators in the text area (not gutter).
++func (p *ColorIndicatorProvider) RenderInTextArea(gtx layout.Context, ctx gutter.GutterContext, gutterWidth int) {
++	indicatorSizePx := gtx.Dp(unit.Dp(indicatorSize))
++
++	fmt.Printf("[ColorIndicator] RenderInTextArea: viewport.Min.Y=%d, viewport.Max.Y=%d, gutterWidth=%d, totalLines=%d\n",
++		ctx.Viewport.Min.Y, ctx.Viewport.Max.Y, gutterWidth, len(ctx.Paragraphs))
++
++	// Debug: print all color info
++	fmt.Printf("[ColorIndicator] Total colorInfos: %d\n", len(p.colorInfos))
++	for line, colors := range p.colorInfos {
++		fmt.Printf("[ColorIndicator] Line %d: %d colors\n", line, len(colors))
++	}
++
++	// Render color indicators for each visible paragraph
++	for _, para := range ctx.Paragraphs {
++		colors, hasColors := p.colorInfos[para.Index]
++		if !hasColors || len(colors) == 0 {
++			continue
++		}
++
++		// Skip paragraphs outside the viewport
++		if para.EndY < ctx.Viewport.Min.Y {
++			fmt.Printf("[ColorIndicator] Skipping line %d: para.EndY=%d < viewport.Min.Y=%d\n",
++				para.Index, para.EndY, ctx.Viewport.Min.Y)
++			continue
++		}
++		if para.StartY > ctx.Viewport.Max.Y {
++			fmt.Printf("[ColorIndicator] Breaking at line %d: para.StartY=%d > viewport.Max.Y=%d\n",
++				para.Index, para.StartY, ctx.Viewport.Max.Y)
++			break
++		}
++
++		fmt.Printf("[ColorIndicator] Rendering color indicators for line %d: %d colors\n", para.Index, len(colors))
++		fmt.Printf("[ColorIndicator] Line %d: para.StartY=%d, para.EndY=%d, viewport.Min.Y=%d, viewport.Max.Y=%d, lineHeight=%d\n",
++			para.Index, para.StartY, para.EndY, ctx.Viewport.Min.Y, ctx.Viewport.Max.Y, ctx.LineHeight)
++
++		// Get line text to calculate pixel positions
++		lineText := p.getLineText(para.Index)
++		if lineText == "" {
++			continue
++		}
++
++		// Calculate line offset for converting global positions to line-relative positions
++		lineOffset := 0
++		for i := 0; i < para.Index; i++ {
++			prevLineText := p.getLineText(i)
++			if prevLineText == "" {
++				fmt.Printf("[ColorIndicator] Line %d: empty line, assuming 0 chars\n", i)
++				lineOffset += 1 // +1 for newline even for empty lines
++			} else {
++				fmt.Printf("[ColorIndicator] Calculating offset for line %d: prevLine=%d, prevLineText=%q, len=%d\n",
++					para.Index, i, prevLineText, len(prevLineText))
++				lineOffset += len(prevLineText) + 1 // +1 for newline
++			}
++		}
++		fmt.Printf("[ColorIndicator] Line %d: calculated offset=%d\n", para.Index, lineOffset)
++
++		// Layout: line text to get glyph positions
++		params := ctx.TextParams
++		params.MinWidth = 0
++		params.MaxLines = 1
++		ctx.Shaper.LayoutString(params, lineText)
++
++		fmt.Printf("[ColorIndicator] Line %d: lineText=%q, len=%d\n", para.Index, lineText, len(lineText))
++
++		// Collect glyph positions by tracking character offsets
++		glyphPositions := make([]int, len(lineText)+1)
++		currentPos := 0
++		for {
++			glyph, ok := ctx.Shaper.NextGlyph()
++			if !ok {
++				break
++			}
++			// Map glyph position to character positions
++			// glyph.Runes tells us how many characters this glyph represents
++			runesInGlyph := int(glyph.Runes)
++			for i := 0; i < runesInGlyph && currentPos < len(lineText); i++ {
++				glyphPositions[currentPos] = glyph.X.Floor()
++				currentPos++
++			}
++		}
++		// Fill remaining positions with the last known position
++		if currentPos < len(glyphPositions) {
++			lastPos := 0
++			if currentPos > 0 {
++				lastPos = glyphPositions[currentPos-1]
++			}
++			for currentPos < len(glyphPositions) {
++				glyphPositions[currentPos] = lastPos
++				currentPos++
++			}
++		}
++
++		// Render each color indicator on this line
++		for i, colorInfo := range colors {
++			// Calculate Y position: para.StartY is baseline, need to adjust for indicator center
++			// The indicator should be vertically centered with the text
++			baselineY := para.StartY - ctx.Viewport.Min.Y
++			ascent := para.Ascent.Ceil()
++			descent := para.Descent.Ceil()
++			textHeight := ascent + descent
++			// Center the indicator vertically with the text
++			indicatorY := baselineY - ascent + (textHeight-indicatorSizePx)/2
++
++			colorStartPos := colorInfo.Range.Start - lineOffset
++
++			fmt.Printf("[ColorIndicator] Color %d: globalStart=%d, lineOffset=%d, colorStartPos=%d, lineText=%q\n",
++				i, colorInfo.Range.Start, lineOffset, colorStartPos, lineText)
++			fmt.Printf("[ColorIndicator] Color %d: colorInfo.Original=%q, expected position in line: %d\n",
++				i, colorInfo.Original, strings.Index(lineText, colorInfo.Original))
++
++			if colorStartPos < 0 || colorStartPos >= len(lineText) {
++				fmt.Printf("[ColorIndicator] Skipping color %d: colorStartPos=%d out of range [0, %d)\n",
++					i, colorStartPos, len(lineText))
++				continue
++			}
++
++			// Calculate indicator X position: place it at the start of the color code
++			// but offset by indicator size + gap to avoid overlapping with text
++			var indicatorX int
++			if colorStartPos < len(glyphPositions) {
++				pos := glyphPositions[colorStartPos]
++				// Place indicator to the left of the color code, but ensure it doesn't overlap with previous text
++				indicatorX = max(pos-indicatorSizePx-4, 0)
++				fmt.Printf("[ColorIndicator] Color %d: glyphPos=%d, indicatorSizePx=%d, indicatorX=%d\n",
++					i, pos, indicatorSizePx, indicatorX)
++			} else {
++				indicatorX = 0
++				fmt.Printf("[ColorIndicator] Color %d: colorStartPos >= len(glyphPositions), using fallback indicatorX=%d\n",
++					i, indicatorX)
++			}
++
++			indicatorRect := image.Rect(indicatorX, indicatorY, indicatorX+indicatorSizePx, indicatorY+indicatorSizePx)
++
++			fmt.Printf("[ColorIndicator] Drawing indicator %d at (%d, %d) size %d, color=%v\n",
++				i, indicatorX, indicatorY, indicatorSizePx, colorInfo.Color)
++
++			pointer.CursorPointer.Add(gtx.Ops)
++			clip.Rect(indicatorRect).Push(gtx.Ops).Pop()
++			p.hoverer.Add(gtx.Ops)
++			p.clicker.Add(gtx.Ops)
++
++			stack := clip.Rect(indicatorRect).Push(gtx.Ops)
++			paint.FillShape(gtx.Ops, colorInfo.Color, clip.Rect(indicatorRect).Op())
++			stack.Pop()
++
++			if p.hoveredLine == para.Index && p.hoveredColorIndex == i {
++				borderColor := color.NRGBA{R: 0, G: 120, B: 215, A: 255}
++				borderWidth := 2
++				borderRect := image.Rect(
++					indicatorX-borderWidth,
++					indicatorY-borderWidth,
++					indicatorX+indicatorSizePx+borderWidth,
++					indicatorY+indicatorSizePx+borderWidth,
++				)
++				borderStack := clip.Rect(borderRect).Push(gtx.Ops)
++				paint.FillShape(gtx.Ops, borderColor, clip.Rect(borderRect).Op())
++				borderStack.Pop()
++			}
++		}
++	}
++}
++
++// getLineText returns the text content for a specific line
++func (p *ColorIndicatorProvider) getLineText(lineIndex int) string {
++	// Return the cached line text
++	if lineText, hasLineText := p.lineTexts[lineIndex]; hasLineText {
++		return lineText
++	}
++	return ""
++}
++
++// hitTestLine determines which logical line corresponds to a Y coordinate.
++func (p *ColorIndicatorProvider) hitTestLine(y int) int {
++	if len(p.paragraphs) == 0 {
++		return -1
++	}
++
++	for _, para := range p.paragraphs {
++		if y >= para.StartY && y <= para.EndY {
++			return para.Index
++		}
++	}
++
++	return -1
++}
++
++// hitTestColorIndex determines which color indicator on a line corresponds to an X coordinate.
++func (p *ColorIndicatorProvider) hitTestColorIndex(line int, x int, ctx gutter.GutterContext) int {
++	colors, hasColors := p.colorInfos[line]
++	if !hasColors || len(colors) == 0 {
++		return -1
++	}
++
++	indicatorSizePx := 16 // Fixed size in pixels for hit testing
++	gapPx := 2
++
++	for i := range colors {
++		xPos := gapPx + i*(indicatorSizePx+gapPx)
++		if x >= xPos && x <= xPos+indicatorSizePx {
++			return i
++		}
++	}
++
++	return -1
++}
+diff --git a/gutter/providers/colorindicator_test.go b/gutter/providers/colorindicator_test.go
+new file mode 100644
+index 0000000..9429282
+--- /dev/null
++++ b/gutter/providers/colorindicator_test.go
+@@ -0,0 +1,401 @@
++package providers
++
++import (
++	"testing"
++)
++
++func TestColorIndicatorLineOffset(t *testing.T) {
++	provider := NewColorIndicatorProvider()
++
++	// Test case 1: Simple case with no empty lines
++	lines := []string{
++		"line 0",
++		"line 1",
++		"line 2",
++	}
++	startLine := 0
++	provider.SetLineContents(lines, startLine)
++
++	// Check line offsets
++	expectedOffsets := map[int]int{
++		0: 0,
++		1: 7,  // len("line 0") + 1 (newline)
++		2: 14, // len("line 0") + 1 + len("line 1") + 1
++	}
++
++	for lineNum, expectedOffset := range expectedOffsets {
++		lineText := provider.getLineText(lineNum)
++		if lineText == "" {
++			t.Errorf("Line %d: expected text %q, got empty", lineNum, lines[lineNum])
++			continue
++		}
++
++		// Calculate offset
++		offset := 0
++		for i := range lineNum {
++			prevLineText := provider.getLineText(i)
++			if prevLineText == "" {
++				offset += 1 // +1 for newline even for empty lines
++			} else {
++				offset += len(prevLineText) + 1 // +1 for newline
++			}
++		}
++
++		if offset != expectedOffset {
++			t.Errorf("Line %d: expected offset %d, got %d", lineNum, expectedOffset, offset)
++		}
++	}
++}
++
++func TestColorIndicatorLineOffsetWithEmptyLines(t *testing.T) {
++	provider := NewColorIndicatorProvider()
++
++	// Test case 2: With empty lines
++	lines := []string{
++		"line 0",
++		"", // empty line
++		"line 2",
++		"", // empty line
++		"line 4",
++	}
++	startLine := 0
++	provider.SetLineContents(lines, startLine)
++
++	// Check line offsets
++	expectedOffsets := map[int]int{
++		0: 0,
++		1: 7,  // len("line 0") + 1
++		2: 8,  // +1 for empty line
++		3: 15, // +1 for "line 2" + 1
++		4: 16, // +1 for empty line
++	}
++
++	for lineNum, expectedOffset := range expectedOffsets {
++		lineText := provider.getLineText(lineNum)
++		if lineText == "" && lines[lineNum] != "" {
++			t.Errorf("Line %d: expected text %q, got empty", lineNum, lines[lineNum])
++		}
++
++		// Calculate offset
++		offset := 0
++		for i := range lineNum {
++			prevLineText := provider.getLineText(i)
++			if prevLineText == "" {
++				offset += 1 // +1 for newline even for empty lines
++			} else {
++				offset += len(prevLineText) + 1 // +1 for newline
++			}
++		}
++
++		if offset != expectedOffset {
++			t.Errorf("Line %d: expected offset %d, got %d", lineNum, expectedOffset, offset)
++		}
++	}
++}
++
++func TestColorIndicatorMultipleColorsOnSameLine(t *testing.T) {
++	provider := NewColorIndicatorProvider()
++
++	// Test case 3: Multiple colors on the same line
++	lines := []string{
++		"var colors = \"#FF0000 #00FF00 #0000FF #FFFF00\"",
++	}
++	startLine := 0
++	provider.SetLineContents(lines, startLine)
++
++	// Check that all colors are detected
++	if len(provider.colorInfos) == 0 {
++		t.Error("Expected colors to be detected, but got none")
++	}
++
++	// Check line 0 has multiple colors
++	colors, hasColors := provider.colorInfos[0]
++	if !hasColors {
++		t.Error("Expected colors on line 0, but got none")
++	}
++
++	if len(colors) != 4 {
++		t.Errorf("Expected 4 colors on line 0, got %d", len(colors))
++	}
++
++	// Check color positions
++	expectedColors := []string{"#FF0000", "#00FF00", "#0000FF", "#FFFF00"}
++	for i, expectedColor := range expectedColors {
++		if i >= len(colors) {
++			t.Errorf("Missing color %d: %s", i, expectedColor)
++			continue
++		}
++		if colors[i].Original != expectedColor {
++			t.Errorf("Color %d: expected %s, got %s", i, expectedColor, colors[i].Original)
++		}
++	}
++}
++
++func TestColorIndicatorPositionCalculation(t *testing.T) {
++	provider := NewColorIndicatorProvider()
++
++	// Test case 4: Position calculation
++	lines := []string{
++		"  #FF0000  #00FF00  #0000FF",
++	}
++	startLine := 0
++	provider.SetLineContents(lines, startLine)
++
++	// Simulate glyph positions (simplified)
++	glyphPositions := []int{
++		0,   // space
++		10,  // space
++		20,  // #
++		30,  // F
++		40,  // F
++		50,  // 0
++		60,  // 0
++		70,  // 0
++		80,  // 0
++		90,  // space
++		100, // space
++		110, // #
++		120, // 0
++		130, // 0
++		140, // F
++		150, // F
++		160, // 0
++		170, // 0
++		180, // 0
++		190, // space
++		200, // space
++		210, // #
++		220, // 0
++		230, // 0
++		240, // 0
++		250, // F
++		260, // F
++		270, // 0
++		280, // 0
++		290, // 0
++	}
++
++	// Test color positions
++	colors, hasColors := provider.colorInfos[0]
++	if !hasColors {
++		t.Error("Expected colors on line 0, but got none")
++	}
++
++	// Check that colors are at expected positions
++	// #FF0000 starts at position 2 (after two spaces)
++	// #00FF00 starts at position 11 (after two spaces and #FF0000)
++	// #0000FF starts at position 20 (after two spaces and #FF0000 #00FF00)
++	expectedPositions := []int{2, 11, 20}
++
++	for i, expectedPos := range expectedPositions {
++		if i >= len(colors) {
++			t.Errorf("Missing color %d at position %d", i, expectedPos)
++			continue
++		}
++
++		// Calculate relative position
++		lineOffset := 0
++		colorStartPos := colors[i].Range.Start - lineOffset
++
++		if colorStartPos != expectedPos {
++			t.Errorf("Color %d: expected position %d, got %d", i, expectedPos, colorStartPos)
++		}
++
++		// Check that position is within glyph positions
++		if colorStartPos >= len(glyphPositions) {
++			t.Errorf("Color %d: position %d is out of range [0, %d]", i, colorStartPos, len(glyphPositions))
++		}
++	}
++}
++
++func TestColorIndicatorOverlapDetection(t *testing.T) {
++	// Test case 5: Overlap detection
++	gutterWidth := 100
++	indicatorSize := 24
++	gap := 4
++
++	// Test case 1: No overlap (enough space between texts)
++	// indicatorX = gutterWidth + textPos - indicatorSize - gap
++	// prevTextEnd = gutterWidth + prevTextPos + gap
++	// For no overlap: indicatorX >= prevTextEnd
++	// 100 + textPos - 24 - 4 >= 100 + 30 + 4
++	// textPos >= 62
++	textPos := 62
++	prevTextPos := 30
++
++	indicatorX := gutterWidth + textPos - indicatorSize - gap
++	prevTextEnd := gutterWidth + prevTextPos + gap
++
++	if indicatorX < prevTextEnd {
++		t.Errorf("Expected no overlap, but indicatorX=%d < prevTextEnd=%d", indicatorX, prevTextEnd)
++	}
++
++	// Test case 2: With overlap (not enough space)
++	textPos = 35
++	prevTextPos = 30
++
++	indicatorX = gutterWidth + textPos - indicatorSize - gap
++	prevTextEnd = gutterWidth + prevTextPos + gap
++
++	if indicatorX >= prevTextEnd {
++		t.Errorf("Expected overlap, but indicatorX=%d >= prevTextEnd=%d", indicatorX, prevTextEnd)
++	}
++
++	// Test adjustment
++	adjustedX := prevTextEnd
++	expectedAdjustedX := 134 // 100 + 30 + 4 = 134
++	if adjustedX != expectedAdjustedX {
++		t.Errorf("Expected adjustedX=%d, got %d", expectedAdjustedX, adjustedX)
++	}
++}
++
++func TestColorIndicatorColorParsing(t *testing.T) {
++	provider := NewColorIndicatorProvider()
++
++	// Test case 6: Color parsing
++	lines := []string{
++		"var red = \"#FF0000\"",
++		"var green = \"rgb(0, 255, 0)\"",
++		"var blue = \"hsl(240, 100%, 50%)\"",
++	}
++	startLine := 0
++	provider.SetLineContents(lines, startLine)
++
++	// Check that all lines have colors
++	if len(provider.colorInfos) != 3 {
++		t.Errorf("Expected 3 lines with colors, got %d", len(provider.colorInfos))
++	}
++
++	// Check color types - note that color detector may also detect variable names as colors
++	expectedColors := map[int]string{
++		0: "#FF0000",
++		1: "rgb(0, 255, 0)",
++		2: "hsl(240, 100%, 50%)",
++	}
++
++	for lineNum, expectedColor := range expectedColors {
++		colors, hasColors := provider.colorInfos[lineNum]
++		if !hasColors {
++			t.Errorf("Line %d: expected color %s, but got none", lineNum, expectedColor)
++			continue
++		}
++
++		// Check if expected color is in the list
++		found := false
++		for _, color := range colors {
++			if color.Original == expectedColor {
++				found = true
++				break
++			}
++		}
++
++		if !found {
++			t.Errorf("Line %d: expected color %s not found in %v", lineNum, expectedColor, colors)
++		}
++	}
++}
++
++func TestColorIndicatorYPosition(t *testing.T) {
++	// Test case 7: Y position calculation
++	paraStartY := 100
++	viewportMinY := 50
++
++	indicatorY := paraStartY - viewportMinY
++
++	expectedY := 50 // 100 - 50
++
++	if indicatorY != expectedY {
++		t.Errorf("Expected Y position %d, got %d", expectedY, indicatorY)
++	}
++}
++
++func TestColorIndicatorViewportFiltering(t *testing.T) {
++	// Test case 8: Viewport filtering
++	viewportMinY := 100
++	viewportMaxY := 200
++
++	// Test cases
++	testCases := []struct {
++		paraStartY   int
++		paraEndY     int
++		shouldRender bool
++	}{
++		{50, 60, false},   // Below viewport
++		{80, 120, true},   // Partially visible
++		{150, 180, true},  // Fully visible
++		{220, 240, false}, // Above viewport
++	}
++
++	for i, tc := range testCases {
++		skipBelow := tc.paraEndY < viewportMinY
++		skipAbove := tc.paraStartY > viewportMaxY
++
++		shouldSkip := skipBelow || skipAbove
++
++		if shouldSkip != !tc.shouldRender {
++			t.Errorf("Test case %d: expected shouldRender=%v, got %v", i, tc.shouldRender, !shouldSkip)
++		}
++	}
++}
++
++func TestColorIndicatorLeftSidePositioning(t *testing.T) {
++	// Test case 9: Left side positioning
++	provider := NewColorIndicatorProvider()
++
++	// Test line with multiple colors
++	lines := []string{
++		"var testColors = \"#FF0000 #00FF00 #0000FF #FFFF00 #800080 #FFA500\"",
++	}
++	startLine := 0
++	provider.SetLineContents(lines, startLine)
++
++	// Check that colors are detected
++	colors, hasColors := provider.colorInfos[0]
++	if !hasColors {
++		t.Error("Expected colors on line 0, but got none")
++		return
++	}
++
++	if len(colors) < 6 {
++		t.Errorf("Expected at least 6 colors, got %d", len(colors))
++		return
++	}
++
++	// Verify color positions are in the correct order
++	// Colors should be ordered by their start positions
++	for i := 1; i < len(colors); i++ {
++		if colors[i].Range.Start <= colors[i-1].Range.End {
++			t.Errorf("Color %d starts at %d, which is before or at the end of color %d (ends at %d)",
++				i, colors[i].Range.Start, i-1, colors[i-1].Range.End)
++		}
++	}
++
++	// Test with different line formats
++	testLines := []string{
++		"#FF0000",                     // Single color at start
++		"  #FF0000",                   // Color with leading spaces
++		"text #FF0000",                // Color after text
++		"text #FF0000 more text",      // Color in middle
++		"#FF0000 #00FF00",             // Two colors
++		"  #FF0000  #00FF00  #0000FF", // Multiple colors with spaces
++	}
++
++	for i, testLine := range testLines {
++		provider.SetLineContents([]string{testLine}, 0)
++		lineColors, hasColors := provider.colorInfos[0]
++		if hasColors {
++			for j, color := range lineColors {
++				// Check that color start position is valid
++				if color.Range.Start < 0 || color.Range.Start >= len(testLine) {
++					t.Errorf("Line %d, color %d: start position %d out of range [0, %d]",
++						i, j, color.Range.Start, len(testLine))
++				}
++				// Check that color end position is after start
++				if color.Range.End <= color.Range.Start {
++					t.Errorf("Line %d, color %d: end position %d is not after start %d",
++						i, j, color.Range.End, color.Range.Start)
++				}
++			}
++		}
++	}
++}
+diff --git a/gutter/providers/runbutton.go b/gutter/providers/runbutton.go
+index d1942ef..15fcd4d 100644
+--- a/gutter/providers/runbutton.go
++++ b/gutter/providers/runbutton.go
+@@ -41,12 +41,6 @@ const (
+ 
+ // RunButtonProvider renders run buttons for main and test functions in the gutter.
+ type RunButtonProvider struct {
+-	// clicker handles click events on buttons.
+-	clicker gesture.Click
+-
+-	// pending holds run events that haven't been consumed yet.
+-	pending []RunButtonEvent
+-
+ 	// paragraphs caches the visible paragraphs from the last Layout call.
+ 	paragraphs []gutter.Paragraph
+ 
+@@ -61,6 +55,12 @@ type RunButtonProvider struct {
+ 
+ 	// viewport caches the viewport from the last Layout call.
+ 	viewport image.Rectangle
++
++	// clicker handles click events on buttons.
++	clicker gesture.Click
++
++	// pending holds run button events that haven't been consumed yet.
++	pending []RunButtonEvent
+ }
+ 
+ // NewRunButtonProvider creates a new run button provider with default settings.
+@@ -69,6 +69,7 @@ func NewRunButtonProvider() *RunButtonProvider {
+ 		buttonTypes: make(map[int]RunButtonType),
+ 		buttonTexts: make(map[int]string),
+ 		paragraphs:  make([]gutter.Paragraph, 0),
++		pending:     make([]RunButtonEvent, 0),
+ 	}
+ }
+ 
+@@ -182,6 +183,30 @@ func (p *RunButtonProvider) Layout(gtx layout.Context, ctx gutter.GutterContext)
+ 		m.Stop().Add(gtx.Ops)
+ 	}
+ 
++	// Process click events
++	for {
++		evt, ok := p.clicker.Update(gtx.Source)
++		if !ok {
++			break
++		}
++		if evt.Kind == gesture.KindClick {
++			// Find which line was clicked
++			clickY := int(evt.Position.Y) + ctx.Viewport.Min.Y
++			line := p.hitTestLine(clickY)
++
++			if line >= 0 {
++				btnType, hasButton := p.buttonTypes[line]
++				if hasButton && btnType != RunButtonNone {
++					p.pending = append(p.pending, RunButtonEvent{
++						ButtonType: btnType,
++						Line:       line,
++						ButtonText: p.buttonTexts[line],
++					})
++				}
++			}
++		}
++	}
++
+ 	return layout.Dimensions{Size: image.Pt(buttonSizePx, 0)}
+ }
+ 
+@@ -221,6 +246,28 @@ func (p *RunButtonProvider) HandleHover(line int) *gutter.HoverInfo {
+ 	}
+ }
+ 
++// GetPendingEvents returns pending run button events and clears the pending list.
++func (p *RunButtonProvider) GetPendingEvents() []RunButtonEvent {
++	events := p.pending
++	p.pending = p.pending[:0]
++	return events
++}
++
++// hitTestLine determines which logical line corresponds to a Y coordinate.
++func (p *RunButtonProvider) hitTestLine(y int) int {
++	if len(p.paragraphs) == 0 {
++		return -1
++	}
++
++	for _, para := range p.paragraphs {
++		if y >= para.StartY && y <= para.EndY {
++			return para.Index
++		}
++	}
++
++	return -1
++}
++
+ // analyzeLines analyzes line contents to determine if they should have run buttons.
+ func (p *RunButtonProvider) analyzeLines(lines []string, startLine int) {
+ 	// Patterns for detecting main and test functions
+@@ -284,13 +331,6 @@ func trimSpace(s string) string {
+ 	return s[start:end]
+ }
+ 
+-// GetPendingEvents returns pending run button events and clears the pending list.
+-func (p *RunButtonProvider) GetPendingEvents() []RunButtonEvent {
+-	events := p.pending
+-	p.pending = p.pending[:0]
+-	return events
+-}
+-
+ // RunButtonEvent represents a click event on a run button.
+ type RunButtonEvent struct {
+ 	// ButtonType is the type of button that was clicked.
+diff --git a/option.go b/option.go
+index a102b2f..cca6b12 100644
+--- a/option.go
++++ b/option.go
+@@ -259,3 +259,26 @@ func WithColumnEdit() EditorOption {
+ 		e.SetColumnEditMode(true)
+ 	}
+ }
++
++// WithColorIndicators enables color indicators in the gutter.
++// Color indicators show color swatches next to detected color values in code.
++// Hovering over a color indicator automatically opens the color picker.
++func WithColorIndicators() EditorOption {
++	return func(e *Editor) {
++		e.initBuffer()
++		if e.gutterManager == nil {
++			e.gutterManager = gutter.NewManager()
++		}
++		// Check if color indicator provider already exists
++		hasColorIndicator := false
++		for _, p := range e.gutterManager.Providers() {
++			if p.ID() == providers.ColorIndicatorProviderID {
++				hasColorIndicator = true
++				break
++			}
++		}
++		if !hasColorIndicator {
++			e.gutterManager.Register(providers.NewColorIndicatorProvider())
++		}
++	}
++}
+-- 
+2.47.0.windows.2
+

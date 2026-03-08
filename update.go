@@ -42,7 +42,7 @@ func main() {
 		os.WriteFile(filepath.Join(gvcodeRepoDir, "go.mod"), []byte(`
 module github.com/oligo/gvcode
 
-go 1.26
+go 1.26.1
 
 `), 0o644)
 		updateAllDeps(gvcodeRepoDir, false)
@@ -92,7 +92,7 @@ go 1.26
 		os.WriteFile(filepath.Join(gioRepoDir, "go.mod"), []byte(`
 module gioui.org
 
-go 1.26
+go 1.26.1
 
 `), 0o644)
 		updateAllDeps(gioRepoDir, true)
