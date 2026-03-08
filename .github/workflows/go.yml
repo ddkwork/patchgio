@@ -35,7 +35,8 @@ jobs:
 
       - name: Run update script
         run: |
-          echo "GOMEMLIMIT=8GiB" >> $GITHUB_ENV
+          echo "GOMEMLIMIT=16GiB" >> $GITHUB_ENV
+          echo "GODEBUG=madvdontneed=1" >> $GITHUB_ENV
           go run .
         env:
           GH_USER: ${{ env.GH_USER }}
