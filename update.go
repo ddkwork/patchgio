@@ -181,18 +181,11 @@ func getLatestGioVersion() string {
 		return defaultVersion
 	}
 
-	// 提取 SHA 和日期
+	// 提取 SHA
 	sha := branch.Commit.SHA
-	date := branch.Commit.Commit.Author.Date
 
-	// 格式化为 YYYYMMDDHHMMSS
-	date = strings.ReplaceAll(date, "-", "")
-	date = strings.ReplaceAll(date, "T", "")
-	date = strings.ReplaceAll(date, ":", "")
-	date = strings.Split(date, ".")[0] // 移除毫秒部分
-
-	// 构建版本字符串
-	version := fmt.Sprintf("v0.0.0-%s-%s", date, sha[:12])
+	// 构建版本字符串，时间部分固定为 00010101000000
+	version := fmt.Sprintf("v0.0.0-00010101000000-%s", sha[:12])
 	fmt.Printf("使用 GitHub API 获取的版本: %s\n", version)
 	return version
 }
