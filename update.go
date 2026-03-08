@@ -205,7 +205,7 @@ func runModernizeCommands(repoDir string) {
 	}
 	gitCommitWithDir(repoDir, "格式化代码")
 
-	stream.Fix(repoDir)
+	// stream.Fix(repoDir)
 	if !gitAddWithDir(repoDir) {
 		mylog.Warning("没有检测到旧语法需要升级")
 		return
