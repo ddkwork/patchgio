@@ -1,0 +1,167 @@
+Run echo "GOMEMLIMIT=4GiB" >> $GITHUB_ENV
+执行命令：echo "GOMEMLIMIT=4GiB" >> $GITHUB_ENV
+go: downloading github.com/ddkwork/golibrary v0.2.4
+go: 下载 github.com/ddkwork/golibrary v0.2.4
+go: downloading github.com/google/go-cmp v0.7.0
+go: 下载 github.com/google/go-cmp v0.7.0
+go: downloading golang.org/x/mod v0.35.0
+go: 下载 golang.org/x/mod v0.35.0
+go: downloading golang.org/x/text v0.36.0
+go: 下载 golang.org/x/text v0.36.0
+2026-05-14 16:18:28  Trac         doInit1 │ log_header------------------ key & value ------------------ ../../../../../opt/hostedtoolcache/go/1.26.2/x64/src/runtime/proc.go:8103
+2026-05-14 16:18:28  Trac         doInit1 │ log_header------------------ 键值对 ------------------ ../../../../../opt/hostedtoolcache/go/1.26.2/x64/src/runtime/proc.go:8103
+2026-05-14 16:18:28  Succ           func1 │ exec commandgit config --global user.email action@github.com ../../../go/pkg/mod/github.com/ddkwork/golibrary@v0.2.4/std/stream/command.go:111
+2026-05-14 16:18:28  成功           函数1 │ 执行命令git config --global user.email action@github.com ../../../go/pkg/mod/github.com/ddkwork/golibrary@v0.2.4/std/stream/command.go:111
+2026-05-14 16:18:28  Succ           func1 │ exec commandgit config --global user.name GitHub Action ../../../go/pkg/mod/github.com/ddkwork/golibrary@v0.2.4/std/stream/command.go:111
+2026-05-14 16:18:28  成功           函数1 │ 执行命令git config --global user.name GitHub Action ../../../go/pkg/mod/github.com/ddkwork/golibrary@v0.2.4/std/stream/command.go:111
+=== 开始更新 gio 仓库 ===
+ 
+=== 克隆 gio 仓库 ===
+ 
+2026-05-14 16:18:28  Succ           func1 │ exec commandgit clone https://github.com/gioui/gio gio ../../../go/pkg/mod/github.com/ddkwork/golibrary@v0.2.4/std/stream/command.go:111
+2026-05-14 16:18:28  成功           函数1 │ 执行命令git clone https://github.com/gioui/gio gio ../../../go/pkg/mod/github.com/ddkwork/golibrary@v0.2.4/std/stream/command.go:111
+=== 更新 gio 依赖 ===
+ 
+2026-05-14 16:18:29  Succ           func1 │ exec commandgo mod tidy ../../../go/pkg/mod/github.com/ddkwork/golibrary@v0.2.4/std/stream/command.go:111
+2026-05-14 16:18:29  成功           函数1 │ 执行命令go mod tidy ../../../go/pkg/mod/github.com/ddkwork/golibrary@v0.2.4/std/stream/command.go:111
+panic: go: finding module for package golang.org/x/net/idna
+恐慌：go：查找模块包 golang.org/x/net/idna 时出错
+	go: finding module for package golang.org/x/sys/unix
+	go: 为包 golang.org/x/sys/unix 查找模块
+	go: finding module for package golang.org/x/sys/windows
+	go: 为模块 golang.org/x/sys/windows 查找包
+	go: finding module for package golang.org/x/sys/windows/registry
+	go: 为模块 golang.org/x/sys/windows/registry 查找包
+	go: downloading golang.org/x/sys v0.44.0
+	go: 正在下载 golang.org/x/sys v0.44.0
+	go: downloading golang.org/x/net v0.54.0
+	go: 正在下载 golang.org/x/net v0.54.0
+	go: finding module for package github.com/go-text/typesetting/font
+	go: 为包 github.com/go-text/typesetting/font 查找模块
+	go: finding module for package golang.org/x/image/font/gofont/gobold
+go: 查找模块以获取包 golang.org/x/image/font/gofont/gobold
+	go: finding module for package golang.org/x/image/font/gofont/gobolditalic
+go: 查找模块以获取包 golang.org/x/image/font/gofont/gobolditalic
+	go: finding module for package golang.org/x/image/font/gofont/goitalic
+go: 查找模块以获取包 golang.org/x/image/font/gofont/goitalic
+	go: downloading golang.org/x/image v0.40.0
+go: 下载 golang.org/x/image v0.40.0
+	go: downloading github.com/go-text/typesetting v0.3.4
+go: 下载 github.com/go-text/typesetting v0.3.4
+	go: finding module for package golang.org/x/image/font/gofont/gomedium
+go: 查找模块以获取包 golang.org/x/image/font/gofont/gomedium
+	go: finding module for package golang.org/x/image/font/gofont/gomediumitalic
+go: 查找模块以获取包 golang.org/x/image/font/gofont/gomediumitalic
+	go: finding module for package golang.org/x/image/font/gofont/gomono
+go: 查找模块以获取包 golang.org/x/image/font/gofont/gomono
+	go: finding module for package golang.org/x/image/font/gofont/gomonobold
+go: 查找模块以获取包 golang.org/x/image/font/gofont/gomonobold
+	go: finding module for package golang.org/x/image/font/gofont/gomonobolditalic
+go: 查找模块中包 golang.org/x/image/font/gofont/gomonobolditalic
+	go: finding module for package golang.org/x/image/font/gofont/gomonoitalic
+go: 为包 golang.org/x/image/font/gofont/gomonoitalic 查找模块
+	go: finding module for package golang.org/x/image/font/gofont/goregular
+go: 正在为包 golang.org/x/image/font/gofont/goregular 查找模块
+	go: finding module for package golang.org/x/image/font/gofont/gosmallcaps
+go: 查找模块以获取包 golang.org/x/image/font/gofont/gosmallcaps
+	go: finding module for package golang.org/x/image/font/gofont/gosmallcapsitalic
+go: 为包 golang.org/x/image/font/gofont/gosmallcapsitalic 查找模块
+	go: finding module for package github.com/go-text/typesetting/font/opentype
+go: 查找模块以获取包 github.com/go-text/typesetting/font/opentype
+	go: finding module for package gioui.org/shader
+go: 为包 gioui.org/shader 查找模块
+	go: finding module for package gioui.org/shader/gio
+go: 查找模块以获取包 gioui.org/shader/gio
+	go: finding module for package github.com/go-text/typesetting/di
+	go: finding module for package github.com/go-text/typesetting/fontscan
+	go: downloading gioui.org/shader v1.0.8
+	go: finding module for package github.com/go-text/typesetting/language
+	go: finding module for package github.com/go-text/typesetting/shaping
+	go: finding module for package golang.org/x/image/math/fixed
+	go: finding module for package golang.org/x/text/unicode/bidi
+	go: downloading golang.org/x/text v0.37.0
+	go: finding module for package github.com/go-text/typesetting/segmenter
+	go: finding module for package golang.org/x/exp/shiny/iconvg
+	go: finding module for package golang.org/x/text/runes
+	go: finding module for package golang.org/x/exp/shiny/materialdesign/icons
+	go: finding module for package golang.org/x/image/colornames
+	go: finding module for package eliasnaur.com/font/noto/sans/arabic/regular
+	go: finding module for package eliasnaur.com/font/noto/emoji/color
+	go: downloading golang.org/x/exp/shiny v0.0.0-20260508232706-74f9aab9d74a
+	go: downloading golang.org/x/exp v0.0.0-20260508232706-74f9aab9d74a
+	go: finding module for package eliasnaur.com/font/roboto/robotoregular
+	go: finding module for package golang.org/x/exp/maps
+	go: downloading eliasnaur.com/font v0.0.0-20230308162249-dd43949cb42d
+	go: found golang.org/x/net/idna in golang.org/x/net v0.54.0
+	go: found golang.org/x/sys/unix in golang.org/x/sys v0.44.0
+	go: found golang.org/x/sys/windows in golang.org/x/sys v0.44.0
+	go: found golang.org/x/sys/windows/registry in golang.org/x/sys v0.44.0
+	go: found github.com/go-text/typesetting/font in github.com/go-text/typesetting v0.3.4
+	go: found golang.org/x/image/font/gofont/gobold in golang.org/x/image v0.40.0
+	go: found golang.org/x/image/font/gofont/gobolditalic in golang.org/x/image v0.40.0
+	go: found golang.org/x/image/font/gofont/goitalic in golang.org/x/image v0.40.0
+	go: found golang.org/x/image/font/gofont/gomedium in golang.org/x/image v0.40.0
+	go: found golang.org/x/image/font/gofont/gomediumitalic in golang.org/x/image v0.40.0
+	go: found golang.org/x/image/font/gofont/gomono in golang.org/x/image v0.40.0
+	go: found golang.org/x/image/font/gofont/gomonobold in golang.org/x/image v0.40.0
+	go: found golang.org/x/image/font/gofont/gomonobolditalic in golang.org/x/image v0.40.0
+	go: found golang.org/x/image/font/gofont/gomonoitalic in golang.org/x/image v0.40.0
+	go: found golang.org/x/image/font/gofont/goregular in golang.org/x/image v0.40.0
+	go: found golang.org/x/image/font/gofont/gosmallcaps in golang.org/x/image v0.40.0
+	go: found golang.org/x/image/font/gofont/gosmallcapsitalic in golang.org/x/image v0.40.0
+	go: found github.com/go-text/typesetting/font/opentype in github.com/go-text/typesetting v0.3.4
+	go: found gioui.org/shader in gioui.org/shader v1.0.8
+	go: found gioui.org/shader/gio in gioui.org/shader v1.0.8
+	go: found github.com/go-text/typesetting/di in github.com/go-text/typesetting v0.3.4
+	go: found github.com/go-text/typesetting/fontscan in github.com/go-text/typesetting v0.3.4
+	go: found github.com/go-text/typesetting/language in github.com/go-text/typesetting v0.3.4
+	go: found github.com/go-text/typesetting/shaping in github.com/go-text/typesetting v0.3.4
+	go: found golang.org/x/image/math/fixed in golang.org/x/image v0.40.0
+	go: found golang.org/x/text/unicode/bidi in golang.org/x/text v0.37.0
+	go: found github.com/go-text/typesetting/segmenter in github.com/go-text/typesetting v0.3.4
+	go: found golang.org/x/exp/shiny/iconvg in golang.org/x/exp/shiny v0.0.0-20260508232706-74f9aab9d74a
+	go: found golang.org/x/text/runes in golang.org/x/text v0.37.0
+	go: found golang.org/x/exp/shiny/materialdesign/icons in golang.org/x/exp/shiny v0.0.0-20260508232706-74f9aab9d74a
+	go: found golang.org/x/image/colornames in golang.org/x/image v0.40.0
+	go: found eliasnaur.com/font/noto/sans/arabic/regular in eliasnaur.com/font v0.0.0-20230308162249-dd43949cb42d
+	go: found eliasnaur.com/font/noto/emoji/color in eliasnaur.com/font v0.0.0-20230308162249-dd43949cb42d
+	go: found eliasnaur.com/font/roboto/robotoregular in eliasnaur.com/font v0.0.0-20230308162249-dd43949cb42d
+	go: found golang.org/x/exp/maps in golang.org/x/exp v0.0.0-20260508232706-74f9aab9d74a
+	go: downloading github.com/go-text/typesetting-utils v0.0.0-20260223113751-2d88ac90dae3
+	
+	signal: killed [recovered, repanicked]
+
+goroutine 1 [running]:
+main.main.main.OnceFunc.func5.func6.1()
+	/opt/hostedtoolcache/go/1.26.2/x64/src/sync/oncefunc.go:30 +0x70
+panic({0x601360?, 0x30bb28598020?})
+	/opt/hostedtoolcache/go/1.26.2/x64/src/runtime/panic.go:860 +0x13a
+github.com/ddkwork/golibrary/std/mylog.Check[...]({0x30bb285a3800, 0x16a3?})
+	/home/runner/go/pkg/mod/github.com/ddkwork/golibrary@v0.2.4/std/mylog/check.go:18 +0x2bd
+github.com/ddkwork/golibrary/std/stream.runCommand.func4()
+	/home/runner/go/pkg/mod/github.com/ddkwork/golibrary@v0.2.4/std/stream/command.go:179 +0x16e
+github.com/ddkwork/golibrary/std/stream.runCommand.func5()
+	/home/runner/go/pkg/mod/github.com/ddkwork/golibrary@v0.2.4/std/stream/command.go:186 +0x23
+github.com/ddkwork/golibrary/std/stream.runCommand({0x64ff85, 0x3}, 0x0, {0x30bb283d3c40, 0x3, 0x3})
+	/home/runner/go/pkg/mod/github.com/ddkwork/golibrary@v0.2.4/std/stream/command.go:195 +0x51a
+github.com/ddkwork/golibrary/std/stream.RunCommandWithDir({0x64ff85, 0x3}, {0x30bb283d3c40, 0x3, 0x3})
+	/home/runner/go/pkg/mod/github.com/ddkwork/golibrary@v0.2.4/std/stream/command.go:51 +0x54
+main.updateAllDeps({0x64ff85, 0x3}, 0xb5?)
+	/home/runner/work/patchgio/patchgio/update.go:180 +0x90
+main.main.func2()
+	/home/runner/work/patchgio/patchgio/update.go:84 +0x185
+main.main.main.OnceFunc.func5.func6()
+	/opt/hostedtoolcache/go/1.26.2/x64/src/sync/oncefunc.go:33 +0x4b
+sync.(*Once).doSlow(0x0?, 0x0?)
+	/opt/hostedtoolcache/go/1.26.2/x64/src/sync/once.go:78 +0xac
+sync.(*Once).Do(...)
+	/opt/hostedtoolcache/go/1.26.2/x64/src/sync/once.go:69
+main.main.OnceFunc.func5(...)
+	/opt/hostedtoolcache/go/1.26.2/x64/src/sync/oncefunc.go:22
+main.main()
+	/home/runner/work/patchgio/patchgio/update.go:94 +0x2af
+exit status 2
+
+Error: Process completed with exit code 1.
+0s 0秒
+0s 0秒

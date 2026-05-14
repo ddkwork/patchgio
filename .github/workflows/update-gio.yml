@@ -70,11 +70,6 @@ jobs:
           EOF
           
           echo "=== 运行 go mod tidy ==="
-          export GOMEMLIMIT=4GiB
-          export GOGC=50
-          export GOPROXY=https://proxy.golang.org,direct
-          export GODEBUG=madvdontneed=1
-          
           timeout 600s go mod tidy || {
             echo "go mod tidy 超时或失败，继续执行..."
           }
