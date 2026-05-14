@@ -3,7 +3,7 @@ name: Update Gio
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: "0 0 * * *"
 
 env:
   RELEASE_ZIP_FILE_NAME: gio
@@ -22,7 +22,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.26.2'
+          go-version: "1.26.2"
           check-latest: true
 
       - name: Configure Git
@@ -39,44 +39,44 @@ jobs:
           GH_USER: ddkwork
         run: |
           set -e
-          
+
           echo "=== 开始更新 gio 仓库 ==="
-          
+
           echo "=== 克隆 gio 仓库 ==="
           git clone https://github.com/gioui/gio gio
-          
+
           cd gio
-          
+
           # 更新 .gitignore
           echo ".idea" >> .gitignore
           echo "*.cmd" >> .gitignore
           echo "*.log" >> .gitignore
           echo "*.ps1" >> .gitignore
-          
+
           # 清理 .gitignore 中的空行和重复行
           sort -u .gitignore | grep -v '^$' > .gitignore.tmp
           mv .gitignore.tmp .gitignore
-          
+
           # 创建新的 go.mod
           cat > go.mod << 'EOF'
           module gioui.org
-          
+
           go 1.26.2
-          
+
           ignore (
           	example
           	shader
           )
           EOF
-          
+
           echo "=== 运行 go mod tidy ==="
           timeout 600s go mod tidy || {
             echo "go mod tidy 超时或失败，继续执行..."
           }
-          
+
           echo "=== 降级有问题的依赖 ==="
           go get github.com/go-text/typesetting@v0.3.0 || true
-          
+
           echo "=== 提交依赖更改 ==="
           git add .
           if git diff --cached --quiet; then
@@ -84,10 +84,10 @@ jobs:
           else
             git commit -m "更新依赖"
           fi
-          
+
           echo "=== 应用补丁 ==="
           cd ..
-          
+
           for patch_file in export_patch/gio/*.patch; do
             if [ -f "$patch_file" ]; then
               patch_name=$(basename "$patch_file")
@@ -111,10 +111,10 @@ jobs:
               cd ..
             fi
           done
-          
+
           echo "=== 推送到 fork ==="
           cd gio
-          
+
           if [ -n "$GH_TOKEN" ]; then
             push_url="https://${GH_USER}:${GH_TOKEN}@github.com/${GH_USER}/gio.git"
             git push --force "$push_url" HEAD:main
@@ -122,7 +122,7 @@ jobs:
           else
             echo "警告: GH_TOKEN 未设置，跳过推送"
           fi
-          
+
           echo "=== gio 更新完成 ==="
 
       - name: Build dynamic tag
@@ -150,7 +150,7 @@ jobs:
           git config user.name CI
           git config user.email ci@github.com
           git tag ${{ steps.tag.outputs.tag }}
-          
+
           if [ -n "${{ secrets.tk }}" ]; then
             push_url="https://ddkwork:${{ secrets.tk }}@github.com/ddkwork/gio.git"
             git push "$push_url" ${{ steps.tag.outputs.tag }}
