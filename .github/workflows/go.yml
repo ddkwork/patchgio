@@ -35,7 +35,9 @@ jobs:
 
       - name: Run update script
         run: |
-          echo "GOMEMLIMIT=16GiB" >> $GITHUB_ENV
+          echo "GOMEMLIMIT=4GiB" >> $GITHUB_ENV
+          echo "GOGC=50" >> $GITHUB_ENV
+          echo "GOPROXY=https://proxy.golang.org,direct" >> $GITHUB_ENV
           echo "GODEBUG=madvdontneed=1" >> $GITHUB_ENV
           go run .
         env:

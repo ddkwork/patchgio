@@ -179,7 +179,7 @@ func updateAllDeps(repoDir string, runTidy bool) {
 	if runTidy {
 		stream.RunCommandWithDir(repoDir, "go", "mod", "tidy")
 	}
-	// stream.RunCommandWithDir(repoDir, "go", "get", "-u", "all")
+	 stream.RunCommandWithDir(repoDir, "go", "get", "-u", "all")
 }
 
 func commitDepsChanges(repoDir string) {
