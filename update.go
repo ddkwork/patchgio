@@ -47,7 +47,7 @@ func main() {
 		os.WriteFile(filepath.Join(gvcodeRepoDir, "go.mod"), []byte(fmt.Sprintf(`
 module github.com/oligo/gvcode
 
-go 1.26.1
+go 1.26.2
 
 replace (
 	gioui.org v0.9.0 => github.com/ddkwork/gio %s
@@ -68,41 +68,11 @@ replace (
 		cloneRepo(gioRepoDir, GIO_UPSTREAM)
 		gitignoreAppendCmd(gioRepoDir)
 
-		fmt.Println("=== 合并 gio 子模块 ===")
-		gioDeps := []Dependency{
-			{"https://github.com/gioui/gio-cmd", "cmd", "cmd"},
-			{"https://github.com/gioui/gio-x", "x", "x"},
-			{"https://github.com/gioui/gio-example", "example", "example"},
-			{"https://git.sr.ht/~eliasnaur/gio-shader", "shader", "shader"},
-			{"https://git.sr.ht/~eliasnaur/gio-cpu", "cpu", "cpu"},
-		}
-		if stream.IsRunningOnGitHubActions() {
-			os.Remove("export_patch/giosub/0001-添加子模块.patch")
-			for _, dep := range gioDeps {
-				depFullPath := filepath.Join(gioRepoDir, dep.Dir)
-				fmt.Printf("克隆子模块: %s -> %s\n", dep.URL, dep.Dir)
-				stream.RunCommand("git", "clone", dep.URL, depFullPath)
-			}
-
-			for _, dep := range gioDeps {
-				depFullPath := filepath.Join(gioRepoDir, dep.Dir)
-				gitDir := filepath.Join(depFullPath, ".git")
-				os.RemoveAll(gitDir)
-				os.Remove(filepath.Join(depFullPath, "go.mod"))
-				os.Remove(filepath.Join(depFullPath, "go.sum"))
-			}
-			if !gitAddWithDir(gioRepoDir) {
-				return
-			}
-			gitCommitWithDir(gioRepoDir, "合并所有子模块")
-		}
-		applyPatches(gioRepoDir, filepath.Join(root, "export_patch", "giosub"))
-
 		fmt.Println("=== 更新 gio 依赖 ===")
 		os.WriteFile(filepath.Join(gioRepoDir, "go.mod"), []byte(`
 module gioui.org
 
-go 1.26.1
+go 1.26.2
 
 ignore (
 	example
@@ -184,24 +154,18 @@ func getLatestGioVersion() string {
 	// 提取 SHA 和日期
 	sha := branch.Commit.SHA
 	date := branch.Commit.Commit.Author.Date
-	
+
 	// 格式化为 YYYYMMDDHHMMSS
 	date = strings.ReplaceAll(date, "-", "")
 	date = strings.ReplaceAll(date, "T", "")
 	date = strings.ReplaceAll(date, ":", "")
 	date = strings.ReplaceAll(date, "Z", "")
 	date = strings.Split(date, ".")[0]
-	
+
 	// 构建版本字符串
 	version := fmt.Sprintf("v0.0.0-%s-%s", date, sha[:12])
 	fmt.Printf("使用 GitHub API 获取的版本: %s\n", version)
 	return version
-}
-
-type Dependency struct {
-	URL  string
-	Dir  string
-	Name string
 }
 
 func downgradeBugDeps(repoDir string) {
