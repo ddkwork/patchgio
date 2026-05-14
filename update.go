@@ -36,6 +36,7 @@ func main() {
 	root, _ := os.Getwd()
 
 	sync.OnceFunc(func() {
+		return
 		fmt.Println("=== 开始更新 gvcode 仓库 ===")
 		cloneRepo(gvcodeRepoDir, GVCODE_UPSTREAM)
 		gitignoreAppendCmd(gvcodeRepoDir)
