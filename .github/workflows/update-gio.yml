@@ -77,9 +77,6 @@ jobs:
             echo "go mod tidy 超时或失败，继续执行..."
           }
 
-          echo "=== 降级有问题的依赖 ==="
-          go get github.com/go-text/typesetting@v0.3.0 || true
-
           echo "=== 提交依赖更改 ==="
           git add .
           if git diff --cached --quiet; then
