@@ -23,9 +23,9 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
-          go-version: "1.27.rc3"
+          go-version: "1.27-rc.3"
           check-latest: true
 
       - name: Configure Git
