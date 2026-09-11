@@ -66,10 +66,6 @@ jobs:
 
           go 1.27
 
-          ignore (
-          	example
-          	shader
-          )
           EOF
 
           echo "=== 运行 go mod tidy ==="
