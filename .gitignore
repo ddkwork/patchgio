@@ -2,5 +2,4 @@
 gio.tar
 /action_test.go
 *.log
-*.cmd
 *.zip
