@@ -1,0 +1,87 @@
+From 69fd7c8f0b3a0fb91c22aee0f6a916e17914ea76 Mon Sep 17 00:00:00 2001
+From: GitHub Action <action@github.com>
+Date: Fri, 11 Sep 2026 01:39:16 +0000
+Subject: [PATCH] feat- 添加坐标转换支持并完善变换栈管理
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ io/input/pointer.go   | 13 +++++++++++++
+ io/pointer/pointer.go |  8 ++++++++
+ 2 files changed, 21 insertions(+)
+
+diff --git a/io/input/pointer.go b/io/input/pointer.go
+index d22f54b7..d6615c8d 100644
+--- a/io/input/pointer.go
++++ b/io/input/pointer.go
+@@ -582,6 +582,15 @@ func (q *pointerQueue) invTransform(areaIdx int, p f32.Point) f32.Point {
+ 	return q.areas[areaIdx].trans.Invert().Transform(p)
+ }
+ 
++// getTransform returns the accumulated transform for the specified area.
++// The areas[areaIdx].trans is already the accumulated global transform.
++func (q *pointerQueue) getTransform(areaIdx int) f32.Affine2D {
++	if areaIdx == -1 {
++		return f32.AffineId()
++	}
++	return q.areas[areaIdx].trans
++}
++
+ func (q *pointerQueue) hit(areaIdx int, p f32.Point) (bool, pointer.Cursor) {
+ 	c := pointer.CursorDefault
+ 	for areaIdx != -1 {
+@@ -705,6 +714,7 @@ func (q *pointerQueue) Deliver(handlers map[event.Tag]*handler, areaIdx int, e p
+ 			}
+ 			scroll, e.Scroll = h.filter.pointer.clampScroll(scroll)
+ 		}
++		e.Transform = q.getTransform(h.pointer.areaPlusOne - 1)
+ 		e.Position = q.invTransform(h.pointer.areaPlusOne-1, e.Position)
+ 		evts = append(evts, taggedEvent{tag: n.tag, event: e})
+ 		if e.Kind != pointer.Scroll {
+@@ -816,6 +826,7 @@ func (q *pointerQueue) deliverEvent(handlers map[event.Tag]*handler, p pointerIn
+ 			scroll, e.Scroll = f.clampScroll(scroll)
+ 		}
+ 		e := e
++		e.Transform = q.getTransform(h.pointer.areaPlusOne - 1)
+ 		e.Position = q.invTransform(h.pointer.areaPlusOne-1, e.Position)
+ 		evts = append(evts, taggedEvent{event: e, tag: k})
+ 	}
+@@ -875,6 +886,7 @@ func (q *pointerQueue) deliverEnterLeaveEvents(handlers map[event.Tag]*handler,
+ 		e.Kind = pointer.Leave
+ 
+ 		if h.filter.pointer.Matches(e) {
++			e.Transform = q.getTransform(h.pointer.areaPlusOne - 1)
+ 			e.Position = q.invTransform(h.pointer.areaPlusOne-1, e.Position)
+ 			evts = append(evts, taggedEvent{tag: k, event: e})
+ 		}
+@@ -893,6 +905,7 @@ func (q *pointerQueue) deliverEnterLeaveEvents(handlers map[event.Tag]*handler,
+ 		e.Kind = pointer.Enter
+ 
+ 		if h.filter.pointer.Matches(e) {
++			e.Transform = q.getTransform(h.pointer.areaPlusOne - 1)
+ 			e.Position = q.invTransform(h.pointer.areaPlusOne-1, e.Position)
+ 			evts = append(evts, taggedEvent{tag: k, event: e})
+ 		}
+diff --git a/io/pointer/pointer.go b/io/pointer/pointer.go
+index 489a8909..0a149580 100644
+--- a/io/pointer/pointer.go
++++ b/io/pointer/pointer.go
+@@ -41,6 +41,14 @@ type Event struct {
+ 	// Modifiers is the set of active modifiers when
+ 	// the mouse button was pressed.
+ 	Modifiers key.Modifiers
++	// Transform is the transformation matrix that converts from local
++	// coordinates to window (global) coordinates.
++	Transform f32.Affine2D
++}
++
++// AbsolutePosition returns the event position in window coordinates.
++func (e Event) AbsolutePosition() f32.Point {
++	return e.Transform.Transform(e.Position)
+ }
+ 
+ // PassOp sets the pass-through mode. InputOps added while the pass-through
+-- 
+2.54.0.windows.1
+

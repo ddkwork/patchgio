@@ -1,0 +1,36 @@
+From 33abf934f7bba04fdf1c39a342a97666f29d562c Mon Sep 17 00:00:00 2001
+From: GitHub Action <action@github.com>
+Date: Sat, 12 Sep 2026 01:45:17 +0000
+Subject: [PATCH] fix- 编辑器失焦时保留选区高亮以便右键菜单复制
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ widget/editor.go | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/widget/editor.go b/widget/editor.go
+index 07f72414..e20bb62c 100644
+--- a/widget/editor.go
++++ b/widget/editor.go
+@@ -790,11 +790,13 @@ func (e *Editor) layout(gtx layout.Context, textMaterial, selectMaterial op.Call
+ 
+ // paintSelection paints the contrasting background for selected text using the provided
+ // material to set the painting material for the selection.
++//
++// FlowUI patch: the focus guard below was removed so a selection stays
++// highlighted while an editor context menu is open (EN_NOHIDESEL behavior).
++// Gio upstream clears the highlight as soon as the editor loses focus, which
++// makes copy/cut look broken while the menu is showing.
+ func (e *Editor) paintSelection(gtx layout.Context, material op.CallOp) {
+ 	e.initBuffer()
+-	if !gtx.Focused(e) {
+-		return
+-	}
+ 	e.text.PaintSelection(gtx, material)
+ }
+ 
+-- 
+2.54.0.windows.1
+
