@@ -1,7 +1,7 @@
 From 69fd7c8f0b3a0fb91c22aee0f6a916e17914ea76 Mon Sep 17 00:00:00 2001
 From: GitHub Action <action@github.com>
 Date: Fri, 11 Sep 2026 01:39:16 +0000
-Subject: [PATCH] feat- 添加坐标转换支持并完善变换栈管理
+Subject: [PATCH] feat: add pointer transform support
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

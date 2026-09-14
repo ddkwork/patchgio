@@ -1,7 +1,7 @@
 From 33abf934f7bba04fdf1c39a342a97666f29d562c Mon Sep 17 00:00:00 2001
 From: GitHub Action <action@github.com>
 Date: Sat, 12 Sep 2026 01:45:17 +0000
-Subject: [PATCH] fix- 编辑器失焦时保留选区高亮以便右键菜单复制
+Subject: [PATCH] fix: keep selection highlighted while the editor context menu is open
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
